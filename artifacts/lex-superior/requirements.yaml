@@ -1,0 +1,16 @@
+packages:
+  "framer-motion": "For elegant page transitions and scroll animations matching the premium aesthetic"
+  "react-markdown": "For rendering rich text AI responses with citations and bolding"
+  "date-fns": "For formatting consultation dates and timestamps"
+
+images:
+  - path: "artifacts/lex-superior/public/images/hero-bg.png"
+    description: "Abstract luxurious dark navy background with subtle glowing gold geometric lines and particles, deep depth of field, premium legal aesthetic"
+    aspect_ratio: "16:9"
+  - path: "artifacts/lex-superior/public/images/logo.png"
+    description: "Minimalist scales of justice logo in metallic gold on a transparent background, clean vector style"
+    aspect_ratio: "1:1"
+
+notes:
+  - Using generated React Query hooks from @workspace/api-client-react for all data fetching
+  - Relying on Shadcn UI components present in the workspace

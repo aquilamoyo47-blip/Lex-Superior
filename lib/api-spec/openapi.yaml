@@ -1,22 +1,30 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Lex Superior - Zimbabwe Civil Law AI Legal Advocate API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: chat
+    description: Legal consultation chat
+  - name: documents
+    description: Court document generation
+  - name: library
+    description: Legal library content
+  - name: vault
+    description: File vault management
+  - name: consultations
+    description: Consultation session management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +32,373 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /chat:
+    post:
+      operationId: sendMessage
+      tags: [chat]
+      summary: Send a legal query to the AI pipeline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: AI response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /consultations:
+    get:
+      operationId: listConsultations
+      tags: [consultations]
+      summary: List user consultations
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+        - in: query
+          name: practiceArea
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of consultations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsultationListResponse"
+    post:
+      operationId: createConsultation
+      tags: [consultations]
+      summary: Create a new consultation session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConsultationRequest"
+      responses:
+        "201":
+          description: Consultation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Consultation"
+
+  /consultations/{id}:
+    get:
+      operationId: getConsultation
+      tags: [consultations]
+      summary: Get a consultation with messages
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Consultation with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsultationWithMessages"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteConsultation
+      tags: [consultations]
+      summary: Delete a consultation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /documents/generate:
+    post:
+      operationId: generateDocument
+      tags: [documents]
+      summary: Generate a court document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentGenerationRequest"
+      responses:
+        "200":
+          description: Generated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentGenerationResponse"
+
+  /library/statutes:
+    get:
+      operationId: listStatutes
+      tags: [library]
+      summary: List statutes
+      parameters:
+        - in: query
+          name: category
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of statutes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatuteListResponse"
+
+  /library/statutes/{id}:
+    get:
+      operationId: getStatute
+      tags: [library]
+      summary: Get a statute
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Statute detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Statute"
+
+  /library/cases:
+    get:
+      operationId: listCases
+      tags: [library]
+      summary: List case law
+      parameters:
+        - in: query
+          name: court
+          schema:
+            type: string
+        - in: query
+          name: year
+          schema:
+            type: integer
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: tags
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of cases
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseListResponse"
+
+  /library/cases/{id}:
+    get:
+      operationId: getCase
+      tags: [library]
+      summary: Get a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Case detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalCase"
+
+  /library/notes:
+    get:
+      operationId: listNotes
+      tags: [library]
+      summary: List civil procedure notes (BLAW 302)
+      parameters:
+        - in: query
+          name: topic
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of notes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteListResponse"
+
+  /library/updates:
+    get:
+      operationId: listUpdates
+      tags: [library]
+      summary: List legal updates
+      responses:
+        "200":
+          description: List of updates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateListResponse"
+
+  /vault/files:
+    get:
+      operationId: listVaultFiles
+      tags: [vault]
+      summary: List vault files
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+        - in: query
+          name: folder
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultFileListResponse"
+    post:
+      operationId: saveVaultFile
+      tags: [vault]
+      summary: Save a file to the vault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveVaultFileRequest"
+      responses:
+        "201":
+          description: File saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultFile"
+
+  /vault/files/{id}:
+    delete:
+      operationId: deleteVaultFile
+      tags: [vault]
+      summary: Delete a vault file
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /vault/bookmarks:
+    get:
+      operationId: listBookmarks
+      tags: [vault]
+      summary: List bookmarks
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bookmarks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookmarkListResponse"
+    post:
+      operationId: saveBookmark
+      tags: [vault]
+      summary: Save a bookmark
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveBookmarkRequest"
+      responses:
+        "201":
+          description: Bookmark saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bookmark"
+
+  /provider/status:
+    get:
+      operationId: getProviderStatus
+      tags: [chat]
+      summary: Get AI provider availability status
+      responses:
+        "200":
+          description: Provider status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderStatusResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +409,582 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+
+    ChatRequest:
+      type: object
+      properties:
+        consultationId:
+          type: string
+        message:
+          type: string
+        practiceArea:
+          type: string
+          enum: [all, contract, property, procedure, constitutional, administrative, family, insolvency, labour]
+        userId:
+          type: string
+        attachedFiles:
+          type: array
+          items:
+            type: string
+      required:
+        - message
+        - practiceArea
+
+    ChatResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        thinkingChain:
+          type: string
+        providerUsed:
+          type: string
+        responseTimeMs:
+          type: integer
+        fromCache:
+          type: boolean
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerifyFlag"
+        detectedStatutes:
+          type: array
+          items:
+            type: string
+        suggestedCases:
+          type: array
+          items:
+            type: string
+        applicableRules:
+          type: array
+          items:
+            type: string
+        consultationId:
+          type: string
+      required:
+        - id
+        - content
+        - providerUsed
+        - fromCache
+        - flags
+
+    VerifyFlag:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [citation, section, procedure, authority]
+        text:
+          type: string
+        description:
+          type: string
+      required:
+        - type
+        - text
+
+    Consultation:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        title:
+          type: string
+        practiceArea:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        messageCount:
+          type: integer
+      required:
+        - id
+        - practiceArea
+        - createdAt
+
+    ConsultationWithMessages:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        title:
+          type: string
+        practiceArea:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+      required:
+        - id
+        - practiceArea
+        - createdAt
+        - messages
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        consultationId:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        providerUsed:
+          type: string
+        fromCache:
+          type: boolean
+        thinkingChain:
+          type: string
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerifyFlag"
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - role
+        - content
+        - createdAt
+
+    ConsultationListResponse:
+      type: object
+      properties:
+        consultations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Consultation"
+        total:
+          type: integer
+      required:
+        - consultations
+        - total
+
+    CreateConsultationRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        title:
+          type: string
+        practiceArea:
+          type: string
+      required:
+        - practiceArea
+
+    DocumentGenerationRequest:
+      type: object
+      properties:
+        documentType:
+          type: string
+        caseDetails:
+          $ref: "#/components/schemas/CaseDetails"
+        additionalInfo:
+          type: string
+        practiceArea:
+          type: string
+      required:
+        - documentType
+        - caseDetails
+
+    CaseDetails:
+      type: object
+      properties:
+        caseNumber:
+          type: string
+        applicant:
+          type: string
+        respondent:
+          type: string
+        city:
+          type: string
+        legalPractitioner:
+          type: string
+        firm:
+          type: string
+        date:
+          type: string
+
+    DocumentGenerationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        documentType:
+          type: string
+        providerUsed:
+          type: string
+        fromCache:
+          type: boolean
+      required:
+        - id
+        - content
+        - documentType
+        - providerUsed
+        - fromCache
+
+    Statute:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        chapter:
+          type: string
+        category:
+          type: string
+        sections:
+          type: object
+          additionalProperties: true
+        summary:
+          type: string
+        lastUpdated:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - title
+        - category
+
+    StatuteListResponse:
+      type: object
+      properties:
+        statutes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Statute"
+        total:
+          type: integer
+      required:
+        - statutes
+        - total
+
+    LegalCase:
+      type: object
+      properties:
+        id:
+          type: string
+        citation:
+          type: string
+        title:
+          type: string
+        court:
+          type: string
+        year:
+          type: integer
+        subjectTags:
+          type: array
+          items:
+            type: string
+        principle:
+          type: string
+        headnote:
+          type: string
+        statutesApplied:
+          type: array
+          items:
+            type: string
+        fullTextUrl:
+          type: string
+      required:
+        - id
+        - citation
+        - title
+        - court
+
+    CaseListResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: "#/components/schemas/LegalCase"
+        total:
+          type: integer
+      required:
+        - cases
+        - total
+
+    Note:
+      type: object
+      properties:
+        id:
+          type: string
+        unit:
+          type: integer
+        topic:
+          type: string
+        content:
+          type: string
+        keyCases:
+          type: array
+          items:
+            type: string
+        keyRules:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - topic
+        - content
+
+    NoteListResponse:
+      type: object
+      properties:
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Note"
+        total:
+          type: integer
+      required:
+        - notes
+        - total
+
+    LegalUpdate:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        summary:
+          type: string
+        date:
+          type: string
+        importance:
+          type: string
+          enum: [low, medium, high, critical]
+      required:
+        - id
+        - title
+        - summary
+        - date
+
+    UpdateListResponse:
+      type: object
+      properties:
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/LegalUpdate"
+      required:
+        - updates
+
+    VaultFile:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        name:
+          type: string
+        filePath:
+          type: string
+        fileType:
+          type: string
+        fileSize:
+          type: integer
+        folder:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        starred:
+          type: boolean
+        notes:
+          type: string
+        consultationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - filePath
+        - folder
+        - createdAt
+
+    VaultFileListResponse:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/VaultFile"
+        total:
+          type: integer
+        storageUsed:
+          type: integer
+      required:
+        - files
+        - total
+
+    SaveVaultFileRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        name:
+          type: string
+        filePath:
+          type: string
+        fileType:
+          type: string
+        fileSize:
+          type: integer
+        folder:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        notes:
+          type: string
+        consultationId:
+          type: string
+      required:
+        - name
+        - filePath
+        - folder
+
+    Bookmark:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        type:
+          type: string
+          enum: [statute, case, rule, form, principle]
+        referenceId:
+          type: string
+        title:
+          type: string
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - type
+        - referenceId
+        - title
+        - createdAt
+
+    BookmarkListResponse:
+      type: object
+      properties:
+        bookmarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Bookmark"
+      required:
+        - bookmarks
+
+    SaveBookmarkRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        type:
+          type: string
+          enum: [statute, case, rule, form, principle]
+        referenceId:
+          type: string
+        title:
+          type: string
+        notes:
+          type: string
+      required:
+        - type
+        - referenceId
+        - title
+
+    ProviderStatusResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderInfo"
+        activeProvider:
+          type: string
+      required:
+        - providers
+
+    ProviderInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        available:
+          type: boolean
+        dailyUsage:
+          type: integer
+        dailyLimit:
+          type: integer
+        rateLimited:
+          type: boolean
+      required:
+        - name
+        - available
