@@ -14,4 +14,5 @@ export const VerifyFlagType = {
   section: "section",
   procedure: "procedure",
   authority: "authority",
+  "not in module": "not in module",
 } as const;

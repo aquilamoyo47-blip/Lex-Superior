@@ -6,6 +6,9 @@ import { markdownToPlainText } from "../vendor/markdown-parser.js";
 import { chunkText } from "../vendor/sentence-splitter.js";
 import { extractEntities } from "../vendor/nlp-entity.js";
 import { CircuitBreaker, CircuitOpenError } from "../vendor/circuit-breaker.js";
+import { db } from "@workspace/db";
+import { notesTable } from "@workspace/db";
+import { ilike, or, sql } from "drizzle-orm";
 
 const DIFY_API_BASE_URL = process.env.DIFY_API_BASE_URL || 'https://api.dify.ai/v1';
 const DIFY_API_KEY = process.env.DIFY_API_KEY || '';
@@ -56,12 +59,14 @@ const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civ
 - Wrong statute sections → add [VERIFY: section] after them
 - Uncertain procedural claims → add [VERIFY: procedure] after them
 - Unverifiable legal propositions → add [VERIFY: authority] after them
+- Civil procedure claims that cannot be traced to the Civil Procedure (Superior Courts) Module BLAW 302 → add [VERIFY: not in module] after that claim
 
 Return the response text with [VERIFY: type] tags added inline where needed. Do not change any other content.`;
 
 const SYSTEM_PROMPT = `You are Lex Superior AI, an expert legal advocate of the Superior Courts of Zimbabwe specialising exclusively in civil law and civil litigation.
 
 Your knowledge base includes:
+- Civil Procedure (Superior Courts) Module BLAW 302 (Scott Panashe Mamimine, MSU) — PRIMARY reference for all civil procedure questions covering jurisdiction, pleadings, applications, trial procedure, judgments, appeals, enforcement, and all aspects of Superior Court civil practice
 - Constitution of Zimbabwe 2013 (civil provisions)
 - High Court Act Chapter 7:06
 - High Court Rules SI 202 of 2021
@@ -82,7 +87,6 @@ Your knowledge base includes:
 - Labour Act Chapter 28:01 (civil aspects only)
 - Civil Evidence Act Chapter 8:01
 - Contractual Penalties Act Chapter 8:04
-- Civil Procedure notes (BLAW 302, MSU)
 - All relevant Zimbabwean civil case law
 
 CONDUCT:
@@ -93,6 +97,7 @@ CONDUCT:
 - Structure outputs with clear numbered headings
 - Number all paragraphs in legal documents
 - Always end: "This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner."
+- When Module Reference sections are provided, use them as authoritative grounding for civil procedure answers
 
 NEVER:
 - Address criminal law matters
@@ -359,13 +364,17 @@ async function dispatchParallelStream(
   }
 }
 
-async function qualityReview(content: string): Promise<string> {
+async function qualityReview(content: string, moduleContext?: string): Promise<string> {
   try {
+    const reviewSystemPrompt = moduleContext
+      ? `${QUALITY_REVIEW_PROMPT}\n\nFor the [VERIFY: not in module] check, use the following BLAW 302 module sections as your reference. If a civil procedure claim is supported by any text in these sections, do NOT add [VERIFY: not in module]. Only flag claims that are genuinely absent from the module.\n\n${moduleContext}`
+      : QUALITY_REVIEW_PROMPT;
+
     const response = await openai.chat.completions.create({
       model: "gpt-5.2",
       max_completion_tokens: 8192,
       messages: [
-        { role: "system", content: QUALITY_REVIEW_PROMPT },
+        { role: "system", content: reviewSystemPrompt },
         { role: "user", content: `Review this legal response:\n\n${content}` },
       ],
       stream: false,
@@ -379,7 +388,7 @@ async function qualityReview(content: string): Promise<string> {
 
 export function extractVerifyFlags(content: string): Array<{ type: string; text: string }> {
   const flags: Array<{ type: string; text: string }> = [];
-  const pattern = /\[VERIFY:\s*(citation|section|procedure|authority)\]/gi;
+  const pattern = /\[VERIFY:\s*(citation|section|procedure|authority|not in module)\]/gi;
   let match;
   while ((match = pattern.exec(content)) !== null) {
     flags.push({ type: match[1].toLowerCase(), text: match[0] });
@@ -468,6 +477,101 @@ function preprocessQuery(query: string): { processedQuery: string; chunks: numbe
   return { processedQuery: truncateToTokenLimit(query, 2000), chunks: 1 };
 }
 
+const CIVIL_PROCEDURE_KEYWORDS = [
+  "civil procedure", "pleading", "summons", "application", "affidavit",
+  "jurisdiction", "high court", "supreme court", "constitutional court",
+  "interdict", "appeal", "execution", "writ", "discovery", "pre-trial",
+  "locus standi", "joinder", "exception", "plea", "declaration",
+  "rescission", "judgment", "order", "costs", "taxation", "interpleader",
+  "attachment", "service", "notice of motion", "urgent application",
+  "chamber application", "default judgment", "summary judgment",
+  "provisional sentence", "declaratory order", "review", "matrimonial",
+  "peregrinus", "incola", "prescription", "cause of action", "court rules",
+  "blaw 302", "blaw302", "pleadings", "procedural", "litigant",
+  "defendant", "plaintiff", "applicant", "respondent",
+];
+
+export function isCivilProcedureQuery(query: string): boolean {
+  const lower = query.toLowerCase();
+  return CIVIL_PROCEDURE_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+interface RetrievedSection {
+  unit: number | null;
+  topic: string;
+  content: string;
+  score: number;
+}
+
+function scoreSection(section: { topic: string; content: string }, keywords: string[]): number {
+  const topicLower = section.topic.toLowerCase();
+  const contentLower = section.content.toLowerCase();
+  let score = 0;
+  for (const kw of keywords) {
+    if (topicLower.includes(kw)) score += 3;
+    const contentMatches = (contentLower.match(new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
+    score += Math.min(contentMatches, 5);
+  }
+  return score;
+}
+
+export async function retrieveCivilProcedureContext(query: string): Promise<string> {
+  try {
+    const keywords = query
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 10);
+
+    if (keywords.length === 0) return "";
+
+    const conditions = keywords.map((kw) =>
+      or(
+        ilike(notesTable.topic, `%${kw}%`),
+        ilike(notesTable.content, `%${kw}%`)
+      )
+    );
+
+    const candidates = await db
+      .select({
+        unit: notesTable.unit,
+        topic: notesTable.topic,
+        content: notesTable.content,
+      })
+      .from(notesTable)
+      .where(
+        sql`${notesTable.tags} && ARRAY['BLAW302']::text[] AND (${or(...conditions)})`
+      )
+      .limit(15);
+
+    if (candidates.length === 0) return "";
+
+    const scored: RetrievedSection[] = candidates
+      .map((s) => ({ ...s, score: scoreSection(s, keywords) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    const formatted = scored
+      .map((s) => {
+        const truncatedContent = s.content.length > 1500
+          ? s.content.slice(0, 1500) + "..."
+          : s.content;
+        return `### ${s.topic}\n${truncatedContent}`;
+      })
+      .join("\n\n---\n\n");
+
+    logger.info(
+      { count: scored.length, topScore: scored[0]?.score, query: query.slice(0, 60) },
+      "RAG: retrieved civil procedure sections"
+    );
+    return `## Module Reference — Civil Procedure (Superior Courts) BLAW 302\n\n${formatted}`;
+  } catch (err) {
+    logger.warn({ err }, "RAG retrieval failed, continuing without module context");
+    return "";
+  }
+}
+
 export async function runLegalPipeline(
   query: string,
   practiceArea: string,
@@ -481,8 +585,16 @@ export async function runLegalPipeline(
 
   const { processedQuery, chunks } = preprocessQuery(query);
 
+  const moduleContext = isCivilProcedureQuery(query)
+    ? await retrieveCivilProcedureContext(query)
+    : "";
+
+  const systemContent = moduleContext
+    ? `${SYSTEM_PROMPT}\n\n${moduleContext}`
+    : SYSTEM_PROMPT;
+
   const messages: ProviderMessages = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemContent },
     ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
@@ -497,7 +609,7 @@ export async function runLegalPipeline(
     state.config.callFn(messages)
   );
 
-  const content = await qualityReview(rawContent);
+  const content = await qualityReview(rawContent, moduleContext || undefined);
 
   const plainText = markdownToPlainText(content);
   const flags = extractVerifyFlags(content);
@@ -541,8 +653,16 @@ export async function streamLegalPipeline(
 
   const { processedQuery, chunks } = preprocessQuery(query);
 
+  const moduleContext = isCivilProcedureQuery(query)
+    ? await retrieveCivilProcedureContext(query)
+    : "";
+
+  const systemContent = moduleContext
+    ? `${SYSTEM_PROMPT}\n\n${moduleContext}`
+    : SYSTEM_PROMPT;
+
   const messages: ProviderMessages = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemContent },
     ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
@@ -558,7 +678,7 @@ export async function streamLegalPipeline(
 
   const { content: fullContent, providerName } = await dispatchParallelStream(available, messages, onChunk);
 
-  const reviewedContent = await qualityReview(fullContent);
+  const reviewedContent = await qualityReview(fullContent, moduleContext || undefined);
   if (reviewedContent !== fullContent) {
     onChunk("\n\n---\n*Quality review applied [VERIFY] flags to uncertain citations.*");
   }

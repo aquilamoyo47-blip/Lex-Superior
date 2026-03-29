@@ -5,6 +5,7 @@ import { consultationsTable, messagesTable, casesTable, statutesTable } from "@w
 import { eq, desc, ilike, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { searchZimLII, buildZimLIISearchUrl } from "../lib/zimliiScraper.js";
+import { retrieveCivilProcedureContext, isCivilProcedureQuery } from "../lib/aiPipeline.js";
 
 const router: IRouter = Router();
 
@@ -540,8 +541,15 @@ router.post("/council/chat", async (req: Request, res: Response) => {
     res.setHeader("X-Member-Id", memberId);
     res.flushHeaders();
 
+    const moduleContext = isCivilProcedureQuery(message)
+      ? await retrieveCivilProcedureContext(message).catch(() => "")
+      : "";
+    const systemContent = moduleContext
+      ? `${member.systemPrompt}\n\n${moduleContext}`
+      : member.systemPrompt;
+
     const chatMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      { role: "system", content: member.systemPrompt },
+      { role: "system", content: systemContent },
       ...conversationHistory,
       { role: "user", content: message },
     ];

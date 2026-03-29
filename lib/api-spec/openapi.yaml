@@ -494,7 +494,7 @@ components:
       properties:
         type:
           type: string
-          enum: [citation, section, procedure, authority]
+          enum: [citation, section, procedure, authority, not in module]
         text:
           type: string
         description:
