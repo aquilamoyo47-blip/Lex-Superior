@@ -108,6 +108,35 @@ export async function ensureCompatibleFormat(
   return { buffer: wavBuffer, format: "wav" };
 }
 
+interface AudioMessage {
+  content?: string | null;
+  audio?: {
+    transcript?: string;
+    data?: string;
+  };
+}
+
+interface AudioDelta {
+  audio?: {
+    transcript?: string;
+    data?: string;
+  };
+}
+
+function toAudioMessage(msg: unknown): AudioMessage {
+  if (msg !== null && typeof msg === "object") {
+    return msg as AudioMessage;
+  }
+  return {};
+}
+
+function toAudioDelta(delta: unknown): AudioDelta {
+  if (delta !== null && typeof delta === "object") {
+    return delta as AudioDelta;
+  }
+  return {};
+}
+
 /** Voice Chat: audio-in, audio-out using gpt-audio. */
 export async function voiceChat(
   audioBuffer: Buffer,
@@ -127,9 +156,9 @@ export async function voiceChat(
       ],
     }],
   });
-  const message = response.choices[0]?.message as any;
-  const transcript = message?.audio?.transcript || message?.content || "";
-  const audioData = message?.audio?.data ?? "";
+  const message = toAudioMessage(response.choices[0]?.message);
+  const transcript = message.audio?.transcript ?? message.content ?? "";
+  const audioData = message.audio?.data ?? "";
   return {
     transcript,
     audioResponse: Buffer.from(audioData, "base64"),
@@ -158,13 +187,12 @@ export async function voiceChatStream(
 
   return (async function* () {
     for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta as any;
-      if (!delta) continue;
-      if (delta?.audio?.transcript) {
-        yield { type: "transcript", data: delta.audio.transcript };
+      const delta = toAudioDelta(chunk.choices?.[0]?.delta);
+      if (delta.audio?.transcript) {
+        yield { type: "transcript" as const, data: delta.audio.transcript };
       }
-      if (delta?.audio?.data) {
-        yield { type: "audio", data: delta.audio.data };
+      if (delta.audio?.data) {
+        yield { type: "audio" as const, data: delta.audio.data };
       }
     }
   })();
@@ -185,7 +213,8 @@ export async function textToSpeech(
       { role: "user", content: `Repeat the following text verbatim: ${text}` },
     ],
   });
-  const audioData = (response.choices[0]?.message as any)?.audio?.data ?? "";
+  const message = toAudioMessage(response.choices[0]?.message);
+  const audioData = message.audio?.data ?? "";
   return Buffer.from(audioData, "base64");
 }
 
@@ -207,9 +236,8 @@ export async function textToSpeechStream(
 
   return (async function* () {
     for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta as any;
-      if (!delta) continue;
-      if (delta?.audio?.data) {
+      const delta = toAudioDelta(chunk.choices?.[0]?.delta);
+      if (delta.audio?.data) {
         yield delta.audio.data;
       }
     }

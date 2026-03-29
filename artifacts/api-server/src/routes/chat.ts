@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { consultationsTable, messagesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { runLegalPipeline, getProviderStatus } from "../lib/aiPipeline";
+import { streamLegalPipeline, getProviderStatus } from "../lib/aiPipeline";
 import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
@@ -46,8 +46,24 @@ router.post("/chat", async (req, res) => {
       content: message,
     });
 
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    res.write(`data: ${JSON.stringify({ consultationId: activeConsultationId })}\n\n`);
+
     const startTime = Date.now();
-    const result = await runLegalPipeline(message, practiceArea, conversationHistory);
+
+    const result = await streamLegalPipeline(
+      message,
+      practiceArea,
+      conversationHistory,
+      (chunk) => {
+        res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+      }
+    );
+
     const responseTimeMs = Date.now() - startTime;
 
     const [savedMessage] = await db.insert(messagesTable).values({
@@ -56,7 +72,6 @@ router.post("/chat", async (req, res) => {
       content: result.content,
       providerUsed: result.providerUsed,
       fromCache: result.fromCache,
-      thinkingChain: result.thinkingChain,
       flags: result.flags,
     }).returning();
 
@@ -64,10 +79,9 @@ router.post("/chat", async (req, res) => {
       .set({ updatedAt: new Date() })
       .where(eq(consultationsTable.id, activeConsultationId));
 
-    res.json({
+    res.write(`data: ${JSON.stringify({
+      done: true,
       id: savedMessage.id,
-      content: result.content,
-      thinkingChain: result.thinkingChain,
       providerUsed: result.providerUsed,
       responseTimeMs,
       fromCache: result.fromCache,
@@ -76,10 +90,17 @@ router.post("/chat", async (req, res) => {
       suggestedCases: result.suggestedCases,
       applicableRules: result.applicableRules,
       consultationId: activeConsultationId,
-    });
+    })}\n\n`);
+
+    res.end();
   } catch (err) {
     req.log.error({ err }, "Chat error");
-    res.status(500).json({ error: "Internal Server Error", message: (err as Error).message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal Server Error", message: (err as Error).message });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+      res.end();
+    }
   }
 });
 

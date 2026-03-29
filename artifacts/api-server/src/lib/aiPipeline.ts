@@ -1,6 +1,15 @@
+import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 
-const SYSTEM_PROMPT = `You are Lex Superior, an expert legal advocate of the Superior Courts of Zimbabwe specialising exclusively in civil law and civil litigation.
+const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civil law. Review the following legal response and FLAG ONLY (do not rewrite):
+- Suspicious case citations → add [VERIFY: citation] after them
+- Wrong statute sections → add [VERIFY: section] after them
+- Uncertain procedural claims → add [VERIFY: procedure] after them
+- Unverifiable legal propositions → add [VERIFY: authority] after them
+
+Return the response text with [VERIFY: type] tags added inline where needed. Do not change any other content.`;
+
+const SYSTEM_PROMPT = `You are Lex Superior AI, an expert legal advocate of the Superior Courts of Zimbabwe specialising exclusively in civil law and civil litigation.
 
 Your knowledge base includes:
 - Constitution of Zimbabwe 2013 (civil provisions)
@@ -41,187 +50,20 @@ NEVER:
 - Fabricate case citations
 - Omit [VERIFY] tags on uncertain authorities`;
 
-const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civil law. Review the following legal response and FLAG ONLY (do not rewrite):
-- Suspicious case citations → add [VERIFY: citation] after them
-- Wrong statute sections → add [VERIFY: section] after them
-- Uncertain procedural claims → add [VERIFY: procedure] after them
-- Unverifiable legal propositions → add [VERIFY: authority] after them
-
-Return the response text with [VERIFY: type] tags added inline where needed. Do not change any other content.`;
-
-interface ProviderConfig {
-  name: string;
-  endpoint: string;
-  key: string | undefined;
-  model: string;
-  rpm: number;
-  dailyLimit: number;
-  priority: number;
-}
-
-const PROVIDER_POOL: ProviderConfig[] = [
-  {
-    name: 'sambanova',
-    endpoint: 'https://api.sambanova.ai/v1/chat/completions',
-    key: process.env.SAMBANOVA_API_KEY,
-    model: 'DeepSeek-R1',
-    rpm: 50,
-    dailyLimit: 99999,
-    priority: 1
-  },
-  {
-    name: 'groq_1',
-    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    key: process.env.GROQ_API_KEY_1,
-    model: 'deepseek-r1-distill-llama-70b',
-    rpm: 30,
-    dailyLimit: 6000,
-    priority: 2
-  },
-  {
-    name: 'groq_2',
-    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    key: process.env.GROQ_API_KEY_2,
-    model: 'deepseek-r1-distill-llama-70b',
-    rpm: 30,
-    dailyLimit: 6000,
-    priority: 3
-  },
-  {
-    name: 'cerebras',
-    endpoint: 'https://api.cerebras.ai/v1/chat/completions',
-    key: process.env.CEREBRAS_API_KEY,
-    model: 'llama3.1-70b',
-    rpm: 60,
-    dailyLimit: 99999,
-    priority: 4
-  },
-  {
-    name: 'openrouter',
-    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-    key: process.env.OPENROUTER_API_KEY,
-    model: 'deepseek/deepseek-r1:free',
-    rpm: 10,
-    dailyLimit: 200,
-    priority: 5
-  }
-];
-
-const rateLimitCache = new Map<string, number>();
-const usageCache = new Map<string, number>();
-
-function today(): string {
-  return new Date().toISOString().split('T')[0];
-}
-
-function isRateLimited(name: string): boolean {
-  const expiry = rateLimitCache.get(name);
-  if (!expiry) return false;
-  if (Date.now() > expiry) {
-    rateLimitCache.delete(name);
-    return false;
-  }
-  return true;
-}
-
-function markRateLimited(name: string, ttlSeconds: number): void {
-  rateLimitCache.set(name, Date.now() + ttlSeconds * 1000);
-}
-
-function getUsage(name: string): number {
-  return usageCache.get(`${name}:${today()}`) || 0;
-}
-
-function incrementUsage(name: string): void {
-  const key = `${name}:${today()}`;
-  usageCache.set(key, (usageCache.get(key) || 0) + 1);
-}
-
-function getAvailableProvider(): ProviderConfig | null {
-  for (const provider of PROVIDER_POOL) {
-    if (!provider.key) continue;
-    if (isRateLimited(provider.name)) continue;
-    if (getUsage(provider.name) >= provider.dailyLimit) continue;
-    return provider;
-  }
-  return null;
-}
-
-interface CallResult {
-  content: string;
-  thinkingChain?: string;
-  provider: string;
-}
-
-async function callProvider(
-  provider: ProviderConfig,
-  messages: Array<{ role: string; content: string }>,
-  depth = 0
-): Promise<CallResult> {
-  if (depth > PROVIDER_POOL.length) {
-    throw new Error('All providers exhausted');
-  }
-
-  try {
-    const response = await fetch(provider.endpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${provider.key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        max_tokens: 4096,
-        temperature: 0.1,
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
-
-    if (response.status === 429) {
-      markRateLimited(provider.name, 60);
-      logger.warn({ provider: provider.name }, 'Provider rate limited, trying next');
-      const next = getAvailableProvider();
-      if (!next) throw new Error('All providers rate limited');
-      return callProvider(next, messages, depth + 1);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Provider ${provider.name} returned ${response.status}`);
-    }
-
-    const data = await response.json() as {
-      choices: Array<{
-        message: { content: string; reasoning_content?: string };
-      }>;
-    };
-
-    incrementUsage(provider.name);
-
-    const content = data.choices[0]?.message?.content || '';
-    const thinkingChain = data.choices[0]?.message?.reasoning_content;
-
-    return { content, thinkingChain, provider: provider.name };
-  } catch (err) {
-    markRateLimited(provider.name, 30);
-    logger.warn({ provider: provider.name, err }, 'Provider call failed, trying next');
-    const next = getAvailableProvider();
-    if (!next) throw new Error('All providers exhausted');
-    return callProvider(next, messages, depth + 1);
-  }
-}
-
 async function qualityReview(content: string): Promise<string> {
-  const reviewProvider = getAvailableProvider();
-  if (!reviewProvider) return content;
-
   try {
-    const result = await callProvider(reviewProvider, [
-      { role: 'system', content: QUALITY_REVIEW_PROMPT },
-      { role: 'user', content: `Review this legal response:\n\n${content}` }
-    ]);
-    return result.content || content;
-  } catch {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-5.2',
+      max_completion_tokens: 8192,
+      messages: [
+        { role: 'system', content: QUALITY_REVIEW_PROMPT },
+        { role: 'user', content: `Review this legal response:\n\n${content}` }
+      ],
+      stream: false,
+    });
+    return response.choices[0]?.message?.content || content;
+  } catch (err) {
+    logger.warn({ err }, 'Quality review failed, using original content');
     return content;
   }
 }
@@ -260,7 +102,6 @@ function extractSuggestedCases(content: string): string[] {
 
 export interface PipelineResult {
   content: string;
-  thinkingChain?: string;
   providerUsed: string;
   flags: Array<{ type: string; text: string }>;
   detectedStatutes: string[];
@@ -291,30 +132,100 @@ export async function runLegalPipeline(
     return { ...cached.result, fromCache: true };
   }
 
-  const provider = getAvailableProvider();
-  if (!provider) {
-    throw new Error('No AI providers available. Please try again later.');
-  }
-
-  const messages = [
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
-    ...conversationHistory.slice(-6),
+    ...conversationHistory.slice(-6).map(m => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
     { role: 'user', content: `Practice Area: ${practiceArea}\n\n${query}` }
   ];
 
-  const result = await callProvider(provider, messages);
+  const response = await openai.chat.completions.create({
+    model: 'gpt-5.2',
+    max_completion_tokens: 8192,
+    messages,
+    stream: false,
+  });
 
-  const reviewedContent = await qualityReview(result.content);
+  const rawContent = response.choices[0]?.message?.content || '';
+  const content = await qualityReview(rawContent);
 
-  const flags = extractVerifyFlags(reviewedContent);
-  const detectedStatutes = extractDetectedStatutes(reviewedContent);
-  const suggestedCases = extractSuggestedCases(reviewedContent);
+  const flags = extractVerifyFlags(content);
+  const detectedStatutes = extractDetectedStatutes(content);
+  const suggestedCases = extractSuggestedCases(content);
   const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
 
   const pipelineResult: PipelineResult = {
-    content: reviewedContent,
-    thinkingChain: result.thinkingChain,
-    providerUsed: result.provider,
+    content,
+    providerUsed: 'Replit AI (gpt-5.2)',
+    flags,
+    detectedStatutes,
+    suggestedCases,
+    applicableRules,
+    fromCache: false,
+  };
+
+  const ttl = isGeneralQuery(query) ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  queryCache.set(cacheKey, { result: pipelineResult, expiry: Date.now() + ttl });
+
+  return pipelineResult;
+}
+
+export async function streamLegalPipeline(
+  query: string,
+  practiceArea: string,
+  conversationHistory: Array<{ role: string; content: string }> = [],
+  onChunk: (chunk: string) => void
+): Promise<PipelineResult> {
+  const cacheKey = getCacheKey(query, practiceArea);
+  const cached = queryCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiry) {
+    onChunk(cached.result.content);
+    return { ...cached.result, fromCache: true };
+  }
+
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...conversationHistory.slice(-6).map(m => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${query}` }
+  ];
+
+  logger.info({ practiceArea }, 'Streaming legal pipeline with Replit AI (gpt-5.2)');
+
+  const stream = await openai.chat.completions.create({
+    model: 'gpt-5.2',
+    max_completion_tokens: 8192,
+    messages,
+    stream: true,
+  });
+
+  let fullContent = '';
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta?.content;
+    if (delta) {
+      fullContent += delta;
+      onChunk(delta);
+    }
+  }
+
+  const reviewedContent = await qualityReview(fullContent);
+  if (reviewedContent !== fullContent) {
+    onChunk('\n\n---\n*Quality review applied [VERIFY] flags to uncertain citations.*');
+    fullContent = reviewedContent;
+  }
+
+  const flags = extractVerifyFlags(fullContent);
+  const detectedStatutes = extractDetectedStatutes(fullContent);
+  const suggestedCases = extractSuggestedCases(fullContent);
+  const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+
+  const pipelineResult: PipelineResult = {
+    content: fullContent,
+    providerUsed: 'Replit AI (gpt-5.2)',
     flags,
     detectedStatutes,
     suggestedCases,
@@ -335,11 +246,11 @@ export function getProviderStatus(): Array<{
   dailyLimit: number;
   rateLimited: boolean;
 }> {
-  return PROVIDER_POOL.map(p => ({
-    name: p.name,
-    available: !!p.key && !isRateLimited(p.name) && getUsage(p.name) < p.dailyLimit,
-    dailyUsage: getUsage(p.name),
-    dailyLimit: p.dailyLimit,
-    rateLimited: isRateLimited(p.name),
-  }));
+  return [{
+    name: 'Replit AI (gpt-5.2)',
+    available: true,
+    dailyUsage: 0,
+    dailyLimit: 999999,
+    rateLimited: false,
+  }];
 }

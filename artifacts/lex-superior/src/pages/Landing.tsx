@@ -110,7 +110,7 @@ export default function Landing() {
       <section className="py-24 bg-card/30 border-t border-white/5 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-display font-bold mb-4">How Lex Superior Works</h2>
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-4">How Lex Superior AI Works</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto text-lg">A sophisticated AI pipeline engineered for legal precision.</p>
           </div>
 
@@ -120,7 +120,7 @@ export default function Landing() {
 
             {[
               { step: "01", title: "Context Loading", desc: "Submit your query. The system instantly loads relevant Zimbabwean statutes, rules, and BLAW 302 principles." },
-              { step: "02", title: "Deep Analysis", desc: "Advanced LLMs (DeepSeek R1/Llama 3.1) parse the legal matrix and formulate structured arguments." },
+              { step: "02", title: "Deep Analysis", desc: "Advanced AI (gpt-5.2 via Replit AI) parses the legal matrix and formulates structured arguments." },
               { step: "03", title: "Quality Review", desc: "Outputs are cross-checked. Uncertain citations are flagged with [VERIFY] tags for practitioner review." }
             ].map((item, i) => (
               <div key={i} className="relative z-10 flex flex-col items-center text-center">

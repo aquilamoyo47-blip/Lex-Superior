@@ -103,7 +103,7 @@ export default function Library() {
       {/* Floating Action Button */}
       <div className="fixed bottom-8 right-8 z-50">
         <Button size="lg" className="rounded-full h-16 px-6 bg-primary text-primary-foreground shadow-xl shadow-primary/30 hover:-translate-y-1 transition-all">
-          <Scale className="w-5 h-5 mr-2" /> Ask Lex Superior
+          <Scale className="w-5 h-5 mr-2" /> Ask Lex Superior AI
         </Button>
       </div>
     </AppLayout>

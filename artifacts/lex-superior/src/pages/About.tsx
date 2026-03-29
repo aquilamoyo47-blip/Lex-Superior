@@ -8,7 +8,7 @@ export default function About() {
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center mb-16">
           <Scale className="w-16 h-16 text-primary mx-auto mb-6" />
-          <h1 className="text-4xl font-display font-bold mb-4">About Lex Superior</h1>
+          <h1 className="text-4xl font-display font-bold mb-4">About Lex Superior AI</h1>
           <p className="text-xl text-muted-foreground">Advancing legal access and efficiency in Zimbabwe.</p>
         </div>
 
@@ -16,7 +16,7 @@ export default function About() {
           <section className="prose prose-invert prose-lg max-w-none">
             <h2 className="font-display text-primary">Mission Statement</h2>
             <p>
-              Lex Superior was developed to empower legal practitioners and citizens navigating the complexities of civil litigation in Zimbabwe's Superior Courts. By harnessing advanced LLM architectures specifically tuned to Zimbabwean statutes, rules, and case law, we aim to reduce research time and improve drafting precision.
+              Lex Superior AI was developed to empower legal practitioners and citizens navigating the complexities of civil litigation in Zimbabwe's Superior Courts. By harnessing advanced AI specifically tuned to Zimbabwean statutes, rules, and case law, we aim to reduce research time and improve drafting precision.
             </p>
           </section>
 
@@ -39,7 +39,7 @@ export default function About() {
               <h2 className="text-2xl font-bold text-destructive m-0 font-display">Legal Disclaimer</h2>
             </div>
             <p className="text-foreground/90 leading-relaxed">
-              Lex Superior is an AI software tool designed for research and drafting assistance. 
+              Lex Superior AI is an AI software tool designed for research and drafting assistance. 
               <strong> It is not a lawyer and does not provide legal advice.</strong> The use of this system does not create an attorney-client relationship. All generated documents, citations, and procedural guidance must be independently verified by a registered legal practitioner before use in any court of law.
             </p>
           </section>
