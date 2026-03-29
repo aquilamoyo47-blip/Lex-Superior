@@ -6,19 +6,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Send, Scale, Copy, Download, Bookmark, AlertTriangle, Bot, User, Brain, Search, PlusCircle, CheckCircle2, CircleDashed, MessageSquare, BookOpen, Zap } from "lucide-react";
+import { Send, Scale, Copy, Download, Bookmark, AlertTriangle, User, Brain, Search, PlusCircle, CheckCircle2, CircleDashed, BookOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { useListConsultations } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const PRACTICE_AREAS = [
   "All", "Contract", "Property", "Procedure", "Constitutional", "Administrative", "Family", "Insolvency", "Labour"
-];
-
-const AI_PROVIDERS = [
-  { id: "default", label: "Replit AI" },
-  { id: "coze", label: "Coze Agent" },
 ];
 
 interface Message {
@@ -37,7 +31,6 @@ interface Message {
 export default function Chat() {
   const [input, setInput] = useState("");
   const [practiceArea, setPracticeArea] = useState("Procedure");
-  const [aiProvider, setAiProvider] = useState<"default" | "coze">("default");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [consultationId, setConsultationId] = useState<string | null>(null);
@@ -71,7 +64,7 @@ export default function Chat() {
       id: assistantMsgId,
       role: "assistant",
       content: "",
-      providerUsed: aiProvider === "coze" ? "Coze" : "Replit AI (gpt-5.2)",
+      providerUsed: "Replit AI",
       fromCache: false,
       flags: [],
       streaming: true,
@@ -91,7 +84,6 @@ export default function Chat() {
           message: userMsg.content,
           practiceArea,
           consultationId,
-          provider: aiProvider,
         }),
         signal: controller.signal,
       });
@@ -183,8 +175,8 @@ export default function Chat() {
   return (
     <AppLayout>
       <div className="flex-1 flex overflow-hidden h-[calc(100vh-80px)]">
-        {/* Left Sidebar - History */}
-        <aside className="w-72 border-r border-white/5 bg-background/50 flex-col hidden lg:flex">
+        {/* Left Sidebar */}
+        <aside className="w-64 border-r border-white/5 bg-background/50 flex-col hidden lg:flex">
           <div className="p-4 border-b border-white/5">
             <Button
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
@@ -206,18 +198,8 @@ export default function Chat() {
             </div>
           </div>
           <ScrollArea className="flex-1">
-            <div className="px-4 py-2 space-y-6">
-              <div>
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Provider</h4>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
-                    <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
-                    <span className="text-xs font-medium text-foreground/80">
-                      {aiProvider === "coze" ? "Coze Agent" : "Replit AI (gpt-5.2)"}
-                    </span>
-                  </div>
-                </div>
-              </div>
+            <div className="px-4 py-2">
+              <p className="text-xs text-muted-foreground">No previous consultations.</p>
             </div>
           </ScrollArea>
         </aside>
@@ -225,38 +207,38 @@ export default function Chat() {
         {/* Main Chat Area */}
         <main className="flex-1 flex flex-col relative bg-card/20">
           <ScrollArea className="flex-1 p-4 sm:p-6 lg:p-8" ref={scrollRef}>
-            <div className="max-w-4xl mx-auto space-y-8 pb-32">
+            <div className="max-w-3xl mx-auto space-y-8 pb-40">
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center mt-32">
-                  <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-6 border border-primary/20">
-                    <Scale className="w-10 h-10 text-primary" />
+                <div className="h-full flex flex-col items-center justify-center text-center mt-28">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-5 border border-primary/20">
+                    <Scale className="w-8 h-8 text-primary" />
                   </div>
-                  <h2 className="text-2xl font-display font-bold mb-2">Lex Superior AI Assistant</h2>
-                  <p className="text-muted-foreground max-w-md">Describe your legal matter, ask for procedural guidance, or request document drafting.</p>
+                  <h2 className="text-xl font-display font-bold mb-2">Lex Superior AI</h2>
+                  <p className="text-muted-foreground text-sm max-w-sm">Describe your legal matter, request procedural guidance, or ask for a document draft.</p>
                 </div>
               ) : (
                 messages.map((msg, i) => (
                   <div key={msg.id || i} className={cn(
-                    "flex gap-4 w-full",
+                    "flex gap-3 w-full",
                     msg.role === "user" ? "flex-row-reverse" : "flex-row"
                   )}>
                     <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0 border",
+                      "w-9 h-9 rounded-full flex items-center justify-center shrink-0 border",
                       msg.role === "user" ? "bg-secondary border-white/10" : "bg-primary/10 border-primary/30"
                     )}>
-                      {msg.role === "user" ? <User className="w-5 h-5 text-foreground/70" /> : <Scale className="w-5 h-5 text-primary" />}
+                      {msg.role === "user" ? <User className="w-4 h-4 text-foreground/70" /> : <Scale className="w-4 h-4 text-primary" />}
                     </div>
 
                     <div className={cn(
                       "max-w-[85%]",
-                      msg.role === "user" ? "bg-secondary text-foreground px-5 py-4 rounded-2xl rounded-tr-sm border border-white/5" : ""
+                      msg.role === "user" ? "bg-secondary text-foreground px-4 py-3 rounded-2xl rounded-tr-sm border border-white/5" : ""
                     )}>
                       {msg.role === "assistant" && (
-                        <div className="glass-card rounded-2xl rounded-tl-sm p-6 border-l-4 border-l-primary relative overflow-hidden">
-                          <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/5 text-xs text-muted-foreground font-medium">
+                        <div className="glass-card rounded-2xl rounded-tl-sm p-5 border-l-2 border-l-primary relative overflow-hidden">
+                          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-white/5 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1.5">
-                              <Brain className="w-3.5 h-3.5" />
-                              {msg.providerUsed || "Replit AI (gpt-5.2)"}
+                              <Brain className="w-3 h-3" />
+                              {msg.providerUsed || "Replit AI"}
                             </span>
                             {msg.fromCache && <Badge variant="secondary" className="text-[10px] bg-white/5 border-white/10">CACHED</Badge>}
                             {msg.streaming && (
@@ -268,30 +250,30 @@ export default function Chat() {
                           </div>
 
                           {msg.flags && msg.flags.length > 0 && (
-                            <div className="mb-4 flex flex-wrap gap-2">
+                            <div className="mb-3 flex flex-wrap gap-2">
                               {msg.flags.map((flag: any, idx: number) => (
-                                <Badge key={idx} variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 py-1">
-                                  <AlertTriangle className="w-3 h-3 mr-1.5" />
-                                  [VERIFY: {flag.type.toUpperCase()}] {flag.text}
+                                <Badge key={idx} variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 py-0.5 text-xs">
+                                  <AlertTriangle className="w-3 h-3 mr-1" />
+                                  [VERIFY: {flag.type.toUpperCase()}]
                                 </Badge>
                               ))}
                             </div>
                           )}
 
-                          <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-black/30 prose-pre:border prose-pre:border-white/10 max-w-none">
+                          <div className="prose prose-invert prose-sm prose-p:leading-relaxed prose-pre:bg-black/30 prose-pre:border prose-pre:border-white/10 max-w-none">
                             <ReactMarkdown>{msg.content || (msg.streaming ? "\u200B" : "")}</ReactMarkdown>
                           </div>
 
                           {!msg.streaming && (
-                            <div className="mt-6 pt-4 border-t border-white/5 flex gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => copyToClipboard(msg.content)} className="h-8 text-muted-foreground hover:text-foreground">
-                                <Copy className="w-4 h-4 mr-1.5" /> Copy
+                            <div className="mt-4 pt-3 border-t border-white/5 flex gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => copyToClipboard(msg.content)} className="h-7 text-muted-foreground hover:text-foreground text-xs">
+                                <Copy className="w-3.5 h-3.5 mr-1" /> Copy
                               </Button>
-                              <Button variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-foreground">
-                                <Download className="w-4 h-4 mr-1.5" /> PDF
+                              <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-foreground text-xs">
+                                <Download className="w-3.5 h-3.5 mr-1" /> PDF
                               </Button>
-                              <Button variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-foreground ml-auto">
-                                <Bookmark className="w-4 h-4 mr-1.5" /> Save to Vault
+                              <Button variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-foreground text-xs ml-auto">
+                                <Bookmark className="w-3.5 h-3.5 mr-1" /> Save
                               </Button>
                             </div>
                           )}
@@ -299,7 +281,7 @@ export default function Chat() {
                       )}
 
                       {msg.role === "user" && (
-                        <p className="leading-relaxed">{msg.content}</p>
+                        <p className="leading-relaxed text-sm">{msg.content}</p>
                       )}
                     </div>
                   </div>
@@ -307,26 +289,21 @@ export default function Chat() {
               )}
 
               {isProcessing && messages[messages.length - 1]?.role !== "assistant" && (
-                <div className="flex gap-4 w-full">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-primary/10 border border-primary/30">
-                    <Scale className="w-5 h-5 text-primary" />
+                <div className="flex gap-3">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 bg-primary/10 border border-primary/30">
+                    <Scale className="w-4 h-4 text-primary" />
                   </div>
-                  <Card className="glass-card p-5 max-w-sm w-full">
-                    <div className="space-y-4">
-                      <h4 className="text-sm font-semibold flex items-center gap-2">
-                        <Scale className="w-4 h-4 text-primary" /> Processing Legal Matter...
-                      </h4>
-                      <div className="space-y-3 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-3 text-success">
-                          <CheckCircle2 className="w-4 h-4" /> Context loaded
-                        </div>
-                        <div className="flex items-center gap-3 text-primary">
-                          <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                          {aiProvider === "coze" ? "Coze Agent analysing" : "Replit AI analysing"}
-                        </div>
-                        <div className="flex items-center gap-3 opacity-50">
-                          <CircleDashed className="w-4 h-4" /> Formatting response
-                        </div>
+                  <Card className="glass-card p-4 max-w-xs w-full">
+                    <div className="space-y-3 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2 text-green-400">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Context loaded
+                      </div>
+                      <div className="flex items-center gap-2 text-primary">
+                        <div className="w-3.5 h-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                        Analysing legal matter...
+                      </div>
+                      <div className="flex items-center gap-2 opacity-40">
+                        <CircleDashed className="w-3.5 h-3.5" /> Formatting response
                       </div>
                     </div>
                   </Card>
@@ -336,36 +313,22 @@ export default function Chat() {
           </ScrollArea>
 
           {/* Input Area */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background to-transparent pt-10">
-            <div className="max-w-4xl mx-auto">
-              <div className="mb-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background/95 to-transparent pt-8">
+            <div className="max-w-3xl mx-auto">
+              <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
                 {PRACTICE_AREAS.map(area => (
                   <Badge
                     key={area}
                     variant={practiceArea === area ? "default" : "outline"}
                     className={cn(
-                      "cursor-pointer transition-colors",
-                      practiceArea === area ? "bg-primary text-primary-foreground hover:bg-primary/90" : "hover:bg-white/5 bg-background/50 backdrop-blur-md"
+                      "cursor-pointer transition-colors shrink-0 text-xs",
+                      practiceArea === area
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                        : "hover:bg-white/5 bg-background/50 backdrop-blur-md border-white/10"
                     )}
                     onClick={() => setPracticeArea(area)}
                   >
                     {area}
-                  </Badge>
-                ))}
-              </div>
-              <div className="mb-3 flex gap-2 items-center">
-                <Zap className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                {AI_PROVIDERS.map(p => (
-                  <Badge
-                    key={p.id}
-                    variant={aiProvider === p.id ? "default" : "outline"}
-                    className={cn(
-                      "cursor-pointer transition-colors",
-                      aiProvider === p.id ? "bg-primary text-primary-foreground hover:bg-primary/90" : "hover:bg-white/5 bg-background/50 backdrop-blur-md"
-                    )}
-                    onClick={() => setAiProvider(p.id as "default" | "coze")}
-                  >
-                    {p.label}
                   </Badge>
                 ))}
               </div>
@@ -380,33 +343,27 @@ export default function Chat() {
                     }
                   }}
                   placeholder="Describe your legal matter or request a document..."
-                  className="w-full min-h-[60px] max-h-[200px] bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 pr-14 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none transition-all shadow-lg shadow-black/10"
+                  className="w-full min-h-[56px] max-h-[200px] bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 pr-14 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none transition-all shadow-lg shadow-black/10"
                   rows={2}
                 />
                 <Button
                   size="icon"
-                  className="absolute right-3 bottom-3 h-9 w-9 bg-primary hover:bg-primary/90 rounded-xl"
+                  className="absolute right-3 bottom-3 h-8 w-8 bg-primary hover:bg-primary/90 rounded-xl"
                   onClick={handleSend}
                   disabled={!input.trim() || isProcessing}
                 >
-                  <Send className="w-4 h-4 text-primary-foreground" />
+                  <Send className="w-3.5 h-3.5 text-primary-foreground" />
                 </Button>
               </div>
-              <div className="flex justify-between items-center mt-2 px-2">
-                <div className="flex gap-2">
-                  <Badge variant="secondary" className="bg-white/5 hover:bg-white/10 cursor-pointer text-xs font-normal border-white/5">Draft Pleading</Badge>
-                  <Badge variant="secondary" className="bg-white/5 hover:bg-white/10 cursor-pointer text-xs font-normal border-white/5 hidden sm:inline-flex">Legal Opinion</Badge>
-                </div>
-                <span className="text-xs text-muted-foreground font-medium">Use Shift + Enter for new line</span>
-              </div>
+              <p className="text-right text-xs text-muted-foreground/60 mt-1.5 px-1">Shift + Enter for new line</p>
             </div>
           </div>
         </main>
 
-        {/* Right Sidebar - Context (Hidden on small screens) */}
-        <aside className="w-80 border-l border-white/5 bg-background/50 flex-col hidden xl:flex">
+        {/* Right Sidebar - Context */}
+        <aside className="w-72 border-l border-white/5 bg-background/50 flex-col hidden xl:flex">
           <div className="p-4 border-b border-white/5">
-            <h3 className="font-semibold flex items-center gap-2">
+            <h3 className="font-semibold flex items-center gap-2 text-sm">
               <BookOpen className="w-4 h-4 text-primary" /> Active Context
             </h3>
           </div>
@@ -418,7 +375,7 @@ export default function Chat() {
                   <div className="space-y-2">
                     {activeStatutes.map((s, i) => (
                       <Card key={i} className="p-3 bg-card/50 border-white/5 hover:border-primary/30 transition-colors">
-                        <p className="text-sm font-medium text-foreground">{s}</p>
+                        <p className="text-xs font-medium text-foreground">{s}</p>
                       </Card>
                     ))}
                   </div>
@@ -435,7 +392,7 @@ export default function Chat() {
                   <div className="space-y-2">
                     {activeCases.map((c, i) => (
                       <Card key={i} className="p-3 bg-card/50 border-white/5 hover:border-primary/30 transition-colors">
-                        <p className="text-sm font-medium text-foreground italic">{c}</p>
+                        <p className="text-xs font-medium text-foreground italic">{c}</p>
                       </Card>
                     ))}
                   </div>

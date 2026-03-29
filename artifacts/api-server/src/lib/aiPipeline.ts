@@ -189,74 +189,8 @@ const replitProvider: ProviderConfig = {
   },
 };
 
-function buildCozeProvider(): ProviderConfig | null {
-  const token = process.env.COZE_API_TOKEN;
-  const botId = process.env.COZE_BOT_ID;
-  if (!token || !botId) return null;
-
-  const COZE_API_URL = "https://api.coze.com/open_api/v2/chat";
-
-  async function callCozeRaw(messages: ProviderMessages): Promise<string> {
-    const cozeHistory = messages
-      .filter((m) => m.role !== "system")
-      .slice(0, -1)
-      .map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-        content_type: "text",
-      }));
-
-    const lastUser = messages.filter((m) => m.role === "user").at(-1);
-    const query = lastUser?.content || "";
-
-    const response = await fetch(COZE_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ bot_id: botId, user: "lex-superior-user", query, chat_history: cozeHistory, stream: false }),
-      signal: AbortSignal.timeout(90000),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Coze API returned ${response.status}: ${text}`);
-    }
-
-    const data = (await response.json()) as {
-      code: number;
-      msg: string;
-      messages?: Array<{ role: string; type: string; content: string; content_type: string }>;
-    };
-
-    if (data.code !== 0) {
-      throw new Error(`Coze API error (code ${data.code}): ${data.msg}`);
-    }
-
-    const answer = data.messages?.find((m) => m.role === "assistant" && m.type === "answer");
-    const content = answer?.content || "";
-    if (!content) throw new Error("Coze API returned an empty response.");
-    return content;
-  }
-
-  return {
-    name: "Coze",
-    priority: 2,
-    dailyLimit: 99999,
-    callFn: callCozeRaw,
-    streamFn: async (messages, onChunk) => {
-      const content = await callCozeRaw(messages);
-      onChunk(content);
-      return content;
-    },
-  };
-}
-
 function buildProviderStates(): Map<string, ProviderState> {
   const configs: ProviderConfig[] = [replitProvider];
-  const coze = buildCozeProvider();
-  if (coze) configs.push(coze);
 
   return new Map(
     configs.map((cfg) => [
@@ -757,7 +691,7 @@ export function getProviderStatus(): Array<{
   rateLimited: boolean;
   circuitState: string;
 }> {
-  const statuses = [...providerStates.values()].map((state) => {
+  return [...providerStates.values()].map((state) => {
     getOrResetUsage(state);
     const stats = state.circuit.getStats();
     const rateLimited = state.dailyUsage >= state.config.dailyLimit;
@@ -770,29 +704,4 @@ export function getProviderStatus(): Array<{
       circuitState: stats.state,
     };
   });
-
-  const cozeConfigured = !!(process.env.COZE_API_TOKEN && process.env.COZE_BOT_ID);
-  if (!cozeConfigured && !statuses.find((s) => s.name === "Coze")) {
-    statuses.push({
-      name: "Coze",
-      available: false,
-      dailyUsage: 0,
-      dailyLimit: 99999,
-      rateLimited: false,
-      circuitState: "N/A",
-    });
-  }
-
-  if (!statuses.find((s) => s.name.startsWith("Dify"))) {
-    statuses.push({
-      name: `Dify AI (${DIFY_MODEL})`,
-      available: isDifyAvailable(),
-      dailyUsage: 0,
-      dailyLimit: 999999,
-      rateLimited: false,
-      circuitState: isDifyAvailable() ? "CLOSED" : "N/A",
-    });
-  }
-
-  return statuses;
 }
