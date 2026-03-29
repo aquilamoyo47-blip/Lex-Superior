@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { statutesTable, casesTable, notesTable, updatesTable } from "@workspace/db";
+import { statutesTable, casesTable, notesTable, updatesTable, precedentsTable } from "@workspace/db";
 import { ilike, or, eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { fuzzySearch } from "../vendor/fuzzy-search.js";
@@ -252,6 +252,76 @@ router.get("/library/updates", async (req, res) => {
     res.json({ updates });
   } catch (err) {
     req.log.error({ err }, "List updates error");
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/library/precedents", async (req, res) => {
+  const { q, category } = req.query as Record<string, string>;
+
+  try {
+    const conditions = [];
+    if (category && category.trim()) {
+      conditions.push(eq(precedentsTable.category, category.trim()));
+    }
+
+    const precedents = await db
+      .select({
+        id: precedentsTable.id,
+        title: precedentsTable.title,
+        category: precedentsTable.category,
+        source: precedentsTable.source,
+        filename: precedentsTable.filename,
+        fileType: precedentsTable.fileType,
+        excerpt: precedentsTable.excerpt,
+        wordCount: precedentsTable.wordCount,
+        ingestedAt: precedentsTable.ingestedAt,
+      })
+      .from(precedentsTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(precedentsTable.category, precedentsTable.title)
+      .limit(500);
+
+    if (q && q.trim().length >= 2) {
+      const hybrid = hybridSearch(
+        precedents as unknown as Record<string, unknown>[],
+        q,
+        ["title", "category", "excerpt"]
+      );
+      const results = hybrid.length >= 3 ? hybrid : (() => {
+        const r = fuzzySearch(precedents, q, {
+          keys: ["title", "category", "excerpt"],
+          threshold: 0.4,
+          limit: 100,
+        });
+        return r.map(x => x.item);
+      })();
+
+      res.json({
+        precedents: results.slice(0, 100),
+        total: results.length,
+        fuzzySearch: true,
+      });
+    } else {
+      res.json({ precedents: precedents.slice(0, 100), total: precedents.length, fuzzySearch: false });
+    }
+  } catch (err) {
+    req.log.error({ err }, "List precedents error");
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/library/precedents/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [precedent] = await db
+      .select()
+      .from(precedentsTable)
+      .where(eq(precedentsTable.id, id));
+    if (!precedent) { res.status(404).json({ error: "Not Found" }); return; }
+    res.json(precedent);
+  } catch (err) {
+    req.log.error({ err }, "Get precedent error");
     res.status(500).json({ error: "Internal Server Error" });
   }
 });

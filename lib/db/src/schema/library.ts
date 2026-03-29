@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, integer, date, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, integer, date, jsonb, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -45,6 +45,21 @@ export const updatesTable = pgTable("legal_updates", {
   importance: text("importance").notNull().default("medium"),
 });
 
+export const precedentsTable = pgTable("precedents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  category: text("category").notNull(),
+  source: text("source").notNull().default("Palmer Law Firm"),
+  filename: text("filename").notNull(),
+  fileType: text("file_type").notNull(),
+  fullText: text("full_text").notNull(),
+  excerpt: text("excerpt"),
+  wordCount: integer("word_count"),
+  ingestedAt: timestamp("ingested_at").defaultNow(),
+});
+
+export const insertPrecedentSchema = createInsertSchema(precedentsTable).omit({ id: true });
+
 export const insertStatuteSchema = createInsertSchema(statutesTable).omit({ id: true });
 export const insertCaseSchema = createInsertSchema(casesTable).omit({ id: true });
 export const insertNoteSchema = createInsertSchema(notesTable).omit({ id: true });
@@ -58,3 +73,5 @@ export type InsertNote = z.infer<typeof insertNoteSchema>;
 export type Note = typeof notesTable.$inferSelect;
 export type InsertUpdate = z.infer<typeof insertUpdateSchema>;
 export type LegalUpdate = typeof updatesTable.$inferSelect;
+export type InsertPrecedent = z.infer<typeof insertPrecedentSchema>;
+export type Precedent = typeof precedentsTable.$inferSelect;

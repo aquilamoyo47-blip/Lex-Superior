@@ -1,13 +1,15 @@
 import React, { useState, useRef } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { FileText, Gavel, Scale, Loader2, Download, CheckCircle2, Paperclip, X, Plus, UploadCloud } from "lucide-react";
-import { useGenerateDocument } from "@workspace/api-client-react";
+import { Badge } from "@/components/ui/badge";
+import { FileText, Gavel, Scale, Loader2, Download, CheckCircle2, Paperclip, X, Plus, UploadCloud, Search, BookOpen, ChevronDown, ChevronUp } from "lucide-react";
+import { useGenerateDocument, useListPrecedents, getPrecedent } from "@workspace/api-client-react";
+import type { Precedent, PrecedentFull } from "@workspace/api-client-react";
 import { toast } from "sonner";
 
 const DOCUMENT_CATEGORIES = [
@@ -39,9 +41,88 @@ interface AttachedFile {
   size: string;
 }
 
+const CATEGORY_COLORS: Record<string, string> = {
+  "Civil Procedure": "bg-blue-500/20 text-blue-300 border-blue-500/30",
+  "Labour Law": "bg-orange-500/20 text-orange-300 border-orange-500/30",
+  "Property / Conveyancing": "bg-green-500/20 text-green-300 border-green-500/30",
+  "Corporate": "bg-purple-500/20 text-purple-300 border-purple-500/30",
+  "Criminal": "bg-red-500/20 text-red-300 border-red-500/30",
+  "General": "bg-white/10 text-white/60 border-white/10",
+};
+
+function PrecedentPicker({ onSelect, onClose }: {
+  onSelect: (precedent: Precedent) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const { data, isLoading } = useListPrecedents({
+    q: search.trim().length >= 2 ? search : undefined,
+  });
+  const precedents = data?.precedents ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          placeholder="Search precedents by keyword..."
+          className="pl-9 bg-background border-white/10"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          autoFocus
+        />
+      </div>
+
+      <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+        {isLoading ? (
+          <div className="py-8 text-center text-muted-foreground text-sm">Loading precedents...</div>
+        ) : precedents.length === 0 ? (
+          <div className="py-8 text-center text-muted-foreground text-sm">
+            {search.length >= 2 ? "No matching precedents found." : "Start typing to search precedents."}
+          </div>
+        ) : (
+          precedents.slice(0, 50).map(p => {
+            const colorClass = CATEGORY_COLORS[p.category] ?? CATEGORY_COLORS["General"];
+            return (
+              <button
+                key={p.id}
+                onClick={() => { onSelect(p); onClose(); }}
+                className="w-full text-left p-3 rounded-lg bg-white/5 border border-white/10 hover:border-primary/40 hover:bg-white/10 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-sm font-medium truncate">{p.title}</span>
+                      <Badge variant="outline" className={`text-xs border ${colorClass} flex-shrink-0`}>
+                        {p.category}
+                      </Badge>
+                    </div>
+                    {p.excerpt && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{p.excerpt}</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground flex-shrink-0">
+                    {p.wordCount?.toLocaleString()}w
+                  </span>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      <Button variant="outline" size="sm" className="w-full border-white/10" onClick={onClose}>
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
 export default function Documents() {
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [showPrecedentPicker, setShowPrecedentPicker] = useState(false);
+  const [selectedPrecedent, setSelectedPrecedent] = useState<Precedent | null>(null);
   const [formData, setFormData] = useState({
     caseNumber: "",
     applicant: "",
@@ -105,11 +186,41 @@ export default function Documents() {
     setIsDragOver(false);
   };
 
+  const handleSelectPrecedent = async (precedent: Precedent) => {
+    setSelectedPrecedent(precedent);
+    toast.success(`Loading precedent: ${precedent.title}`);
+
+    try {
+      const full = await getPrecedent(precedent.id);
+      const text = full.fullText ?? precedent.excerpt ?? "";
+      const truncated = text.length > 8000 ? text.slice(0, 8000) + "\n\n[... truncated for display ...]" : text;
+      setFormData(fd => ({
+        ...fd,
+        factsOfMatter: fd.factsOfMatter
+          ? fd.factsOfMatter
+          : `[Based on Palmer precedent: ${precedent.title}]\n\n${truncated}`,
+      }));
+    } catch {
+      if (precedent.excerpt) {
+        setFormData(fd => ({
+          ...fd,
+          factsOfMatter: fd.factsOfMatter
+            ? fd.factsOfMatter
+            : `[Based on Palmer precedent: ${precedent.title}]\n\n${precedent.excerpt}`,
+        }));
+      }
+    }
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDoc) return;
 
     setIsGenerating(true);
+
+    const precedentContext = selectedPrecedent
+      ? `\n\nBASE PRECEDENT (Palmer Law Firm - ${selectedPrecedent.category}):\nTitle: ${selectedPrecedent.title}\n${selectedPrecedent.excerpt ?? ""}`
+      : "";
 
     try {
       await generateDocMutation.mutateAsync({
@@ -118,7 +229,8 @@ export default function Documents() {
           caseDetails: {
             ...formData,
             attachedDocuments: attachedFiles.map(f => f.name)
-          }
+          },
+          additionalInfo: precedentContext || undefined,
         }
       });
     } catch (err) {
@@ -137,6 +249,8 @@ export default function Documents() {
     setAttachedFiles([]);
     setGeneratedDoc(null);
     setIsDragOver(false);
+    setSelectedPrecedent(null);
+    setShowPrecedentPicker(false);
   };
 
   return (
@@ -197,6 +311,56 @@ export default function Documents() {
                         </div>
                       ) : (
                         <form onSubmit={handleGenerate} className="space-y-5 pt-4">
+                          {/* Start from Precedent */}
+                          <div className="space-y-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <BookOpen className="w-4 h-4 text-primary" />
+                                <Label className="text-sm font-semibold text-primary">Start from a Precedent</Label>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="border-primary/30 text-primary hover:bg-primary/10 h-8 px-3 text-xs"
+                                onClick={() => setShowPrecedentPicker(p => !p)}
+                              >
+                                {showPrecedentPicker ? (
+                                  <><ChevronUp className="w-3 h-3 mr-1" /> Hide</>
+                                ) : (
+                                  <><Search className="w-3 h-3 mr-1" /> Browse Palmer Precedents</>
+                                )}
+                              </Button>
+                            </div>
+
+                            {selectedPrecedent ? (
+                              <div className="flex items-start justify-between gap-2 p-2 rounded-lg bg-primary/10 border border-primary/30">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-primary truncate">{selectedPrecedent.title}</p>
+                                  <p className="text-xs text-muted-foreground">{selectedPrecedent.category} · {selectedPrecedent.wordCount?.toLocaleString()} words</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => { setSelectedPrecedent(null); }}
+                                  className="flex-shrink-0 text-muted-foreground hover:text-destructive"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                Optionally select a Palmer Law Firm precedent as your starting template. The AI will adapt it to your case details.
+                              </p>
+                            )}
+
+                            {showPrecedentPicker && (
+                              <PrecedentPicker
+                                onSelect={handleSelectPrecedent}
+                                onClose={() => setShowPrecedentPicker(false)}
+                              />
+                            )}
+                          </div>
+
                           {/* Case Number */}
                           <div className="space-y-2">
                             <Label htmlFor="caseNumber">Case Number (Optional)</Label>
@@ -296,7 +460,6 @@ export default function Documents() {
                               onChange={e => addFiles(e.target.files)}
                             />
 
-                            {/* Drag & Drop Zone */}
                             <div
                               onDrop={handleDrop}
                               onDragOver={handleDragOver}
@@ -311,7 +474,6 @@ export default function Documents() {
                               <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, TXT accepted</p>
                             </div>
 
-                            {/* Attached Files List */}
                             {attachedFiles.length > 0 && (
                               <div className="space-y-2">
                                 {attachedFiles.map(file => (
@@ -348,6 +510,7 @@ export default function Documents() {
                             ) : (
                               <>
                                 <Gavel className="w-5 h-5 mr-2" /> Generate Document
+                                {selectedPrecedent && <span className="ml-1 text-xs opacity-75">(with precedent)</span>}
                               </>
                             )}
                           </Button>

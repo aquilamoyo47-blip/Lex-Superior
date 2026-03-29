@@ -39,7 +39,7 @@ artifacts-monorepo/
 │   │       └── routes/
 │   │           ├── chat.ts         # /api/chat, /api/provider/status
 │   │           ├── consultations.ts # /api/consultations
-│   │           ├── library.ts      # /api/library/statutes|cases|notes|updates
+│   │           ├── library.ts      # /api/library/statutes|cases|notes|updates|precedents
 │   │           ├── vault.ts        # /api/vault/files|bookmarks
 │   │           └── documents.ts    # /api/documents/generate
 │   └── lex-superior/        # React + Vite frontend

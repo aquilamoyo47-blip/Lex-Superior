@@ -342,3 +342,30 @@ export type ListVaultFilesParams = {
 export type ListBookmarksParams = {
   userId?: string;
 };
+
+export interface Precedent {
+  id: string;
+  title: string;
+  category: string;
+  source: string;
+  filename: string;
+  fileType: string;
+  excerpt?: string | null;
+  wordCount?: number | null;
+  ingestedAt?: string | null;
+}
+
+export interface PrecedentFull extends Precedent {
+  fullText: string;
+}
+
+export interface PrecedentListResponse {
+  precedents: Precedent[];
+  total: number;
+  fuzzySearch: boolean;
+}
+
+export type ListPrecedentsParams = {
+  q?: string;
+  category?: string;
+};

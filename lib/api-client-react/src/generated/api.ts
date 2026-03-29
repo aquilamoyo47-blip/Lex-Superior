@@ -35,9 +35,13 @@ import type {
   ListCasesParams,
   ListConsultationsParams,
   ListNotesParams,
+  ListPrecedentsParams,
   ListStatutesParams,
   ListVaultFilesParams,
   NoteListResponse,
+  Precedent,
+  PrecedentFull,
+  PrecedentListResponse,
   ProviderStatusResponse,
   SaveBookmarkRequest,
   SaveVaultFileRequest,
@@ -1700,5 +1704,162 @@ export function useGetProviderStatus<
     queryKey: QueryKey;
   };
 
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List Palmer law firm precedents
+ */
+export const getListPrecedentsUrl = (params?: ListPrecedentsParams) => {
+  const normalizedParams = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+  const stringifiedParams = normalizedParams.toString();
+  return stringifiedParams.length > 0
+    ? `/api/library/precedents?${stringifiedParams}`
+    : `/api/library/precedents`;
+};
+
+export const listPrecedents = async (
+  params?: ListPrecedentsParams,
+  options?: RequestInit,
+): Promise<PrecedentListResponse> => {
+  return customFetch<PrecedentListResponse>(getListPrecedentsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListPrecedentsQueryKey = (params?: ListPrecedentsParams) => {
+  return [`/api/library/precedents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListPrecedentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPrecedents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListPrecedentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listPrecedents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPrecedentsQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPrecedents>>> = ({
+    signal,
+  }) => listPrecedents(params, { signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPrecedents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListPrecedentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPrecedents>>
+>;
+export type ListPrecedentsQueryError = ErrorType<unknown>;
+
+export function useListPrecedents<
+  TData = Awaited<ReturnType<typeof listPrecedents>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListPrecedentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listPrecedents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListPrecedentsQueryOptions(params, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get a single precedent with full text
+ */
+export const getGetPrecedentUrl = (id: string) => `/api/library/precedents/${id}`;
+
+export const getPrecedent = async (
+  id: string,
+  options?: RequestInit,
+): Promise<PrecedentFull> => {
+  return customFetch<PrecedentFull>(getGetPrecedentUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPrecedentQueryKey = (id: string) =>
+  [`/api/library/precedents/${id}`] as const;
+
+export const getGetPrecedentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPrecedent>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPrecedent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetPrecedentQueryKey(id);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPrecedent>>> = ({
+    signal,
+  }) => getPrecedent(id, { signal, ...requestOptions });
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPrecedent>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPrecedentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPrecedent>>
+>;
+export type GetPrecedentQueryError = ErrorType<unknown>;
+
+export function useGetPrecedent<
+  TData = Awaited<ReturnType<typeof getPrecedent>>,
+  TError = ErrorType<unknown>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPrecedent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPrecedentQueryOptions(id, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
   return { ...query, queryKey: queryOptions.queryKey };
 }

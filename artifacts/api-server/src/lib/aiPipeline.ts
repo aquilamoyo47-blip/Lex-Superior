@@ -1,7 +1,7 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { notesTable, statutesTable, casesTable } from "@workspace/db";
+import { notesTable, statutesTable, casesTable, precedentsTable } from "@workspace/db";
 import { ilike, or, sql } from "drizzle-orm";
 import { LRUCache } from "../vendor/lru-cache.js";
 import { countTokens, truncateToTokenLimit } from "../vendor/token-counter.js";
@@ -140,6 +140,43 @@ You respond as a senior advocate would address the court or advise a junior prac
 ## DISCLAIMER
 
 Every response must end with: "This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner for advice on your specific matter."`;
+
+async function retrievePrecedentContext(query: string): Promise<string> {
+  try {
+    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 3).slice(0, 5);
+    if (terms.length === 0) return "";
+
+    const conditions = terms.map(t =>
+      or(
+        ilike(precedentsTable.title, `%${t}%`),
+        ilike(precedentsTable.category, `%${t}%`),
+        ilike(precedentsTable.excerpt, `%${t}%`)
+      )
+    );
+
+    const results = await db
+      .select({
+        title: precedentsTable.title,
+        category: precedentsTable.category,
+        excerpt: precedentsTable.excerpt,
+        source: precedentsTable.source,
+      })
+      .from(precedentsTable)
+      .where(or(...conditions))
+      .limit(3);
+
+    if (results.length === 0) return "";
+
+    const lines = results.map((r, i) =>
+      `[Palmer Precedent ${i + 1}: "${r.title}" — ${r.category}]\n${(r.excerpt ?? "").slice(0, 500)}`
+    );
+
+    return `\n\n## Palmer Law Firm Precedents\n\n*Real practice precedents from Palmer Law Firm matching this query:*\n\n${lines.join("\n\n---\n\n")}`;
+  } catch (err) {
+    logger.debug({ err }, "Precedent retrieval failed");
+    return "";
+  }
+}
 
 const KNOWLEDGE_CONFIDENCE_THRESHOLD = 0.05;
 const MIN_CONFIDENT_RESULTS = 2;
@@ -744,10 +781,13 @@ export async function runLegalPipeline(
     ? await retrieveCivilProcedureContext(query)
     : "";
 
-  const { context: knowledgeContext, confident: knowledgeConfident } =
-    await retrieveKnowledgeContext(query);
+  const [{ context: knowledgeContext, confident: knowledgeConfident }, precedentContext] =
+    await Promise.all([
+      retrieveKnowledgeContext(query),
+      retrievePrecedentContext(query),
+    ]);
 
-  const systemWithContext = [SYSTEM_PROMPT, moduleContext, knowledgeContext]
+  const systemWithContext = [SYSTEM_PROMPT, moduleContext, knowledgeContext, precedentContext]
     .filter(Boolean)
     .join("\n\n");
 
