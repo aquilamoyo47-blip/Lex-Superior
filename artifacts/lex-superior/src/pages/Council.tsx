@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -9,7 +10,7 @@ import {
   Scale, FileText, BookOpen, ClipboardList, Landmark,
   Send, Copy, Download, Bookmark, AlertTriangle, User,
   Brain, PlusCircle, ChevronLeft, Sparkles, Loader2,
-  Search, ExternalLink, Database, GitFork, X
+  Search, ExternalLink, Database, GitFork, X, Mic, Paperclip
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
@@ -69,41 +70,109 @@ interface Message {
   memberId?: string;
 }
 
+const GLOW_COLORS: Record<string, string> = {
+  gold:   "rgba(201,168,76,0.4)",
+  blue:   "rgba(59,130,246,0.4)",
+  purple: "rgba(168,85,247,0.4)",
+  green:  "rgba(34,197,94,0.4)",
+  amber:  "rgba(245,158,11,0.4)",
+};
+
 function MemberCard({ member, onSelect }: { member: CouncilMember; onSelect: () => void }) {
   const Icon = ICON_MAP[member.icon] || Scale;
   const colors = COLOR_MAP[member.color] || COLOR_MAP.gold;
+  const glowColor = GLOW_COLORS[member.color] || GLOW_COLORS.gold;
+
   return (
-    <Card
-      onClick={onSelect}
-      className={cn(
-        "cursor-pointer transition-all duration-200 hover:scale-[1.02] group border",
-        colors.border,
-        "bg-card/40 hover:bg-card/70 backdrop-blur-sm"
-      )}
+    <motion.div
+      whileHover={{ scale: 1.02, y: -3 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
     >
-      <CardContent className="p-6">
-        <div className={cn(
-          "w-14 h-14 rounded-2xl flex items-center justify-center mb-5 border transition-all duration-200",
-          colors.bg, colors.border,
-          `group-hover:shadow-lg group-hover:${colors.glow}`
-        )}>
-          <Icon className={cn("w-7 h-7", colors.badge.split(" ")[1])} />
-        </div>
-        <h3 className="font-display font-bold text-lg text-foreground mb-1">{member.name}</h3>
-        <Badge className={cn("text-xs mb-3 font-medium border-0", colors.badge)}>{member.title}</Badge>
-        <p className="text-sm text-muted-foreground leading-relaxed">{member.description}</p>
-        <Button
-          className={cn(
-            "w-full mt-5 font-semibold transition-all",
-            member.color === "gold"
-              ? "bg-primary hover:bg-primary/90 text-primary-foreground"
-              : "bg-white/5 hover:bg-white/10 text-foreground border border-white/10"
+      <Card
+        onClick={onSelect}
+        className={cn(
+          "cursor-pointer transition-all duration-300 group border relative overflow-hidden shimmer-border",
+          colors.border,
+          "bg-card/40 hover:bg-card/70 backdrop-blur-sm"
+        )}
+        style={{ "--hover-glow": glowColor } as any}
+        onMouseEnter={e => {
+          (e.currentTarget as HTMLElement).style.boxShadow = `0 0 0 1px ${glowColor.replace("0.4", "0.3")}, 0 0 30px ${glowColor.replace("0.4", "0.15")}, 0 8px 32px rgba(0,0,0,0.3)`;
+        }}
+        onMouseLeave={e => {
+          (e.currentTarget as HTMLElement).style.boxShadow = "";
+        }}
+      >
+        <CardContent className="p-6 relative z-10">
+          <div className={cn(
+            "w-14 h-14 rounded-2xl flex items-center justify-center mb-5 border transition-all duration-300",
+            colors.bg, colors.border
           )}
-        >
-          <Sparkles className="w-4 h-4 mr-2" /> Consult {member.name}
-        </Button>
-      </CardContent>
-    </Card>
+            style={{ transition: "box-shadow 0.3s ease" }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLElement).style.boxShadow = `0 0 20px ${glowColor}`;
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLElement).style.boxShadow = "";
+            }}
+          >
+            <Icon className={cn("w-7 h-7", colors.badge.split(" ")[1])} />
+          </div>
+          <h3 className="font-display font-bold text-lg text-foreground mb-1">{member.name}</h3>
+          <Badge className={cn("text-xs mb-3 font-medium border-0", colors.badge)}>{member.title}</Badge>
+          <p className="text-sm text-muted-foreground leading-relaxed">{member.description}</p>
+          <Button
+            className={cn(
+              "w-full mt-5 font-semibold transition-all duration-300",
+              member.color === "gold"
+                ? "bg-primary hover:bg-primary/90 text-primary-foreground hover:shadow-[0_0_16px_rgba(201,168,76,0.4)]"
+                : "bg-white/5 hover:bg-white/10 text-foreground border border-white/10"
+            )}
+          >
+            <Sparkles className="w-4 h-4 mr-2" /> Consult {member.name}
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+function MessageHoverToolbar({ onCopy }: { onCopy: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -4, scale: 0.95 }}
+      transition={{ duration: 0.15 }}
+      className="absolute -top-10 right-2 z-10 flex items-center gap-0.5 bg-card/90 backdrop-blur-xl border border-white/10 rounded-xl px-1.5 py-1 shadow-xl shadow-black/40"
+      style={{ boxShadow: "0 0 0 1px rgba(201,168,76,0.15), 0 8px 24px rgba(0,0,0,0.5)" }}
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg"
+        onClick={onCopy}
+        title="Copy"
+      >
+        <Copy className="w-3 h-3" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 text-muted-foreground hover:text-cyan-400 hover:bg-cyan-400/10 rounded-lg"
+        title="Download"
+      >
+        <Download className="w-3 h-3" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg"
+        title="Save"
+      >
+        <Bookmark className="w-3 h-3" />
+      </Button>
+    </motion.div>
   );
 }
 
@@ -130,6 +199,7 @@ export default function Council() {
   const [consultationId, setConsultationId] = useState<string | null>(null);
   const [detectedStatutes, setDetectedStatutes] = useState<string[]>([]);
   const [suggestedCases, setSuggestedCases] = useState<string[]>([]);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -427,7 +497,12 @@ export default function Council() {
           /* ─── Active Council Chat ─── */
           <>
             {/* Left: Member Info Sidebar */}
-            <aside className="w-72 border-r border-white/5 bg-background/50 flex-col hidden lg:flex">
+            <motion.aside
+              initial={{ x: -20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
+              className="w-72 border-r border-white/5 bg-background/50 flex-col hidden lg:flex"
+            >
               <div className="p-4 border-b border-white/5">
                 <Button
                   variant="ghost"
@@ -436,11 +511,30 @@ export default function Council() {
                 >
                   <ChevronLeft className="w-4 h-4 mr-2" /> All Council Members
                 </Button>
-                <div className={cn(
-                  "w-16 h-16 rounded-2xl flex items-center justify-center border mb-4",
-                  colors.bg, colors.border
-                )}>
-                  <ActiveIcon className={cn("w-8 h-8", colors.badge.split(" ")[1])} />
+                <div className="relative mb-4 w-fit">
+                  <div className={cn(
+                    "w-16 h-16 rounded-2xl flex items-center justify-center border transition-all duration-300",
+                    colors.bg, colors.border
+                  )}
+                    style={{ boxShadow: isStreaming ? `0 0 20px ${GLOW_COLORS[selectedMember.color] || GLOW_COLORS.gold}` : undefined }}
+                  >
+                    <ActiveIcon className={cn("w-8 h-8", colors.badge.split(" ")[1])} />
+                  </div>
+                  {/* LIVE pulse badge */}
+                  <div className={cn(
+                    "absolute -top-1 -right-1 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border transition-all duration-300",
+                    isStreaming
+                      ? "bg-cyan-400/20 border-cyan-400/40 text-cyan-300 animate-live-pulse"
+                      : messages.length > 0
+                      ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
+                      : "bg-white/5 border-white/10 text-muted-foreground/60"
+                  )}>
+                    <span className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      isStreaming ? "bg-cyan-400 animate-pulse" : messages.length > 0 ? "bg-emerald-400" : "bg-muted-foreground/40"
+                    )} />
+                    {isStreaming ? "LIVE" : messages.length > 0 ? "ACTIVE" : "IDLE"}
+                  </div>
                 </div>
                 <h3 className="font-display font-bold text-lg text-foreground leading-tight">{selectedMember.name}</h3>
                 <Badge className={cn("text-xs mt-1 mb-3 border-0", colors.badge)}>{selectedMember.title}</Badge>
@@ -588,7 +682,7 @@ export default function Council() {
                   </div>
                 )}
               </ScrollArea>
-            </aside>
+            </motion.aside>
 
             {/* Centre: Chat */}
             <main className="flex-1 flex flex-col relative bg-card/20">
@@ -668,11 +762,22 @@ export default function Council() {
                     </div>
                   )}
 
+                  <AnimatePresence initial={false}>
                   {messages.map((msg) => (
-                    <div key={msg.id} className={cn("flex gap-4 w-full", msg.role === "user" ? "flex-row-reverse" : "flex-row")}>
+                    <motion.div
+                      key={msg.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.25, ease: "easeOut" }}
+                      className={cn("flex gap-4 w-full", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
+                    >
                       <div className={cn(
-                        "w-10 h-10 rounded-full flex items-center justify-center shrink-0 border",
-                        msg.role === "user" ? "bg-secondary border-white/10" : cn(colors.bg, colors.border)
+                        "w-10 h-10 rounded-full flex items-center justify-center shrink-0 border transition-all duration-300",
+                        msg.role === "user"
+                          ? "bg-secondary border-white/10"
+                          : msg.streaming
+                          ? cn(colors.bg, colors.border, "animate-pulse-ring")
+                          : cn(colors.bg, colors.border)
                       )}>
                         {msg.role === "user"
                           ? <User className="w-5 h-5 text-foreground/70" />
@@ -680,55 +785,84 @@ export default function Council() {
                         }
                       </div>
 
-                      <div className={cn("max-w-[90%]", msg.role === "user" ? "bg-secondary px-5 py-4 rounded-2xl rounded-tr-sm border border-white/5" : "")}>
+                      <div className={cn("max-w-[90%]", msg.role === "user" ? "bg-gradient-to-br from-secondary to-secondary/80 px-5 py-4 rounded-2xl rounded-tr-sm border border-white/8 shadow-md" : "")}>
                         {msg.role === "assistant" && (
-                          <div className={cn("glass-card rounded-2xl rounded-tl-sm p-6 border-l-4 relative overflow-hidden", colors.border.replace("border-", "border-l-"))}>
-                            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/5 text-xs text-muted-foreground">
-                              <Brain className="w-3.5 h-3.5" />
-                              <span className="font-medium">{selectedMember.name}</span>
-                              <Badge className={cn("text-[10px] border-0 ml-1", colors.badge)}>{selectedMember.title}</Badge>
-                              {msg.streaming && <Loader2 className="w-3 h-3 animate-spin ml-auto text-primary" />}
-                            </div>
-
-                            {msg.flags && msg.flags.length > 0 && (
-                              <div className="mb-4 flex flex-wrap gap-2">
-                                {msg.flags.map((flag, idx) => (
-                                  <Badge key={idx} variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 py-1 text-xs">
-                                    <AlertTriangle className="w-3 h-3 mr-1.5" />
-                                    [VERIFY: {flag.type.toUpperCase()}]
-                                  </Badge>
-                                ))}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => !msg.streaming && setHoveredMessageId(msg.id)}
+                            onMouseLeave={() => setHoveredMessageId(null)}
+                          >
+                            <AnimatePresence>
+                              {hoveredMessageId === msg.id && !msg.streaming && (
+                                <MessageHoverToolbar
+                                  onCopy={() => { navigator.clipboard.writeText(msg.content); toast.success("Copied"); }}
+                                />
+                              )}
+                            </AnimatePresence>
+                            <div
+                              className={cn("glass-card rounded-2xl rounded-tl-sm p-6 border-l-4 relative overflow-hidden transition-all duration-300", colors.border.replace("border-", "border-l-"))}
+                              style={msg.streaming ? {
+                                borderColor: undefined,
+                                boxShadow: `0 0 0 1px ${(GLOW_COLORS[selectedMember.color] || GLOW_COLORS.gold).replace("0.4","0.2")}, 0 0 24px ${(GLOW_COLORS[selectedMember.color] || GLOW_COLORS.gold).replace("0.4","0.08")}`
+                              } : undefined}
+                            >
+                              {msg.streaming && (
+                                <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+                                  <div
+                                    className="absolute top-0 bottom-0 w-20 bg-gradient-to-r from-transparent via-primary/5 to-transparent"
+                                    style={{ animation: "card-shimmer 2s ease-in-out infinite" }}
+                                  />
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/5 text-xs text-muted-foreground">
+                                <Brain className="w-3.5 h-3.5 text-cyan-400/70" />
+                                <span className="font-medium">{selectedMember.name}</span>
+                                <Badge className={cn("text-[10px] border-0 ml-1", colors.badge)}>{selectedMember.title}</Badge>
+                                {msg.streaming && (
+                                  <span className="flex items-center gap-1.5 ml-auto text-primary">
+                                    <span className="flex gap-1">
+                                      {[0,1,2].map(i => (
+                                        <span key={i} className="w-1.5 h-1.5 rounded-full bg-gradient-to-br from-primary to-cyan-400 animate-orb-bounce" style={{ animationDelay: `${i * 0.18}s` }} />
+                                      ))}
+                                    </span>
+                                    <span className="text-[10px] uppercase tracking-wide">Live</span>
+                                  </span>
+                                )}
                               </div>
-                            )}
 
-                            <div className="prose prose-invert prose-sm prose-p:leading-relaxed max-w-none">
-                              <ReactMarkdown>{msg.content}</ReactMarkdown>
-                              {msg.streaming && <StreamingDot />}
-                            </div>
+                              {msg.flags && msg.flags.length > 0 && (
+                                <div className="mb-4 flex flex-wrap gap-2">
+                                  {msg.flags.map((flag, idx) => (
+                                    <Badge key={idx} variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 py-1 text-xs">
+                                      <AlertTriangle className="w-3 h-3 mr-1.5" />
+                                      [VERIFY: {flag.type.toUpperCase()}]
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
 
-                            {!msg.streaming && msg.content && (
-                              <div className="mt-5 pt-4 border-t border-white/5 flex gap-2">
-                                <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(msg.content); toast.success("Copied"); }} className="h-8 text-muted-foreground hover:text-foreground text-xs">
-                                  <Copy className="w-3.5 h-3.5 mr-1.5" /> Copy
-                                </Button>
-                                <Button variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-foreground text-xs ml-auto">
-                                  <Bookmark className="w-3.5 h-3.5 mr-1.5" /> Save
-                                </Button>
+                              <div className="prose prose-invert prose-sm prose-p:leading-relaxed max-w-none">
+                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                {msg.streaming && <StreamingDot />}
                               </div>
-                            )}
+                            </div>
                           </div>
                         )}
                         {msg.role === "user" && <p className="leading-relaxed text-sm">{msg.content}</p>}
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
+                  </AnimatePresence>
                 </div>
               </ScrollArea>
 
-              {/* Input */}
-              <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background to-transparent pt-10">
+              {/* Floating Input Bar */}
+              <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background/95 to-transparent pt-10">
                 <div className="max-w-3xl mx-auto">
-                  <div className="relative">
+                  <div
+                    className="relative rounded-2xl border border-white/12 bg-card/80 backdrop-blur-2xl overflow-hidden transition-all duration-300 focus-within:border-primary/40"
+                    style={{ boxShadow: "0 0 0 1px rgba(201,168,76,0.08), 0 20px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+                  >
                     <textarea
                       value={input}
                       onChange={e => setInput(e.target.value)}
@@ -736,21 +870,49 @@ export default function Council() {
                       placeholder={`Ask ${selectedMember.name} a legal question...`}
                       disabled={isStreaming}
                       rows={2}
-                      className="w-full min-h-[60px] max-h-[180px] bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 pr-14 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none transition-all shadow-lg disabled:opacity-60"
+                      className="w-full min-h-[52px] max-h-[180px] bg-transparent p-4 pb-12 pr-4 text-foreground placeholder:text-muted-foreground/60 focus:outline-none resize-none disabled:opacity-60"
                     />
-                    <Button
-                      size="icon"
-                      className="absolute right-3 bottom-3 h-9 w-9 bg-primary hover:bg-primary/90 rounded-xl"
-                      onClick={handleSend}
-                      disabled={!input.trim() || isStreaming}
-                    >
-                      {isStreaming
-                        ? <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
-                        : <Send className="w-4 h-4 text-primary-foreground" />
-                      }
-                    </Button>
+                    {/* Bottom toolbar */}
+                    <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-2 border-t border-white/5">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/60 hover:text-cyan-400 hover:bg-cyan-400/10 rounded-lg transition-all"
+                          title="Voice input"
+                        >
+                          <Mic className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/60 hover:text-primary hover:bg-primary/10 rounded-lg transition-all"
+                          title="Attach file"
+                        >
+                          <Paperclip className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground/40">Shift+Enter for new line</span>
+                        <Button
+                          size="icon"
+                          className={cn(
+                            "h-7 w-7 rounded-xl transition-all duration-200",
+                            input.trim() && !isStreaming
+                              ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-[0_0_12px_rgba(201,168,76,0.4)]"
+                              : "bg-white/5 text-muted-foreground/40 cursor-not-allowed"
+                          )}
+                          onClick={handleSend}
+                          disabled={!input.trim() || isStreaming}
+                        >
+                          {isStreaming
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Send className="w-3.5 h-3.5" />
+                          }
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2 text-center">Shift+Enter for new line · outputs are legal research assistance only</p>
                 </div>
               </div>
             </main>

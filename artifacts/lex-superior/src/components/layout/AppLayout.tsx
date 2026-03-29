@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel, Users, LogIn, LogOut } from "lucide-react";
+import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel, Users, LogIn, LogOut, Command } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -21,12 +22,24 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const { isAuthenticated, login, logout } = useAuth();
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandOpen(prev => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   return (
@@ -92,6 +105,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
+          {/* Command Palette Trigger */}
+          <button
+            onClick={() => setCommandOpen(true)}
+            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/8 bg-white/3 hover:bg-white/6 transition-all text-xs text-muted-foreground/60 hover:text-muted-foreground"
+            title="Open command palette (⌘K)"
+          >
+            <Command className="w-3 h-3" />
+            <span>Quick nav</span>
+            <kbd className="ml-1 px-1 py-0.5 font-mono text-[10px] rounded bg-white/5 border border-white/10">⌘K</kbd>
+          </button>
+
           {/* Auth + Mobile Nav */}
           <div className="flex items-center gap-2">
             {isAuthenticated ? (
@@ -149,6 +173,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      {/* Command Palette */}
+      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col relative z-10">

@@ -178,14 +178,26 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative pt-28 pb-36 overflow-hidden">
+        {/* Mesh grid background */}
+        <div className="absolute inset-0 z-0 mesh-bg opacity-60" />
+
+        {/* Animated dot-grid layer */}
+        <div className="absolute inset-0 z-0 dot-grid-bg opacity-30" />
+
+        {/* Hero background image */}
         <div className="absolute inset-0 z-0">
           <img
             src={`${import.meta.env.BASE_URL}images/hero-bg.png`}
             alt=""
-            className="w-full h-full object-cover opacity-30 mix-blend-overlay"
+            className="w-full h-full object-cover opacity-20 mix-blend-overlay"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/70 to-background" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/20 via-background/60 to-background" />
         </div>
+
+        {/* Radial glow behind headline */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full pointer-events-none z-0"
+          style={{ background: "radial-gradient(ellipse at center, rgba(201,168,76,0.06) 0%, rgba(34,211,238,0.03) 50%, transparent 70%)" }}
+        />
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <motion.div
@@ -197,6 +209,7 @@ export default function Landing() {
             <motion.div
               variants={itemVariants}
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary font-semibold mb-8 text-xs uppercase tracking-widest"
+              style={{ boxShadow: "0 0 20px rgba(201,168,76,0.12)" }}
             >
               <Scale className="w-3.5 h-3.5" />
               Superior Courts of Zimbabwe
@@ -208,7 +221,12 @@ export default function Landing() {
             >
               The AI legal advocate<br className="hidden sm:block" />
               built for{" "}
-              <span className="text-gradient-gold">Zimbabwe</span>
+              <span
+                className="text-gradient-gold neon-text-gold"
+                style={{ textShadow: "0 0 30px rgba(201,168,76,0.5), 0 0 60px rgba(201,168,76,0.2)" }}
+              >
+                Zimbabwe
+              </span>
             </motion.h1>
 
             <motion.p
@@ -226,7 +244,8 @@ export default function Landing() {
                 <Link href="/chat">
                   <Button
                     size="lg"
-                    className="h-13 px-8 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl w-full sm:w-auto shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-all"
+                    className="h-13 px-8 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl w-full sm:w-auto transition-all hover:-translate-y-0.5"
+                    style={{ boxShadow: "0 4px 20px rgba(201,168,76,0.3), 0 0 40px rgba(201,168,76,0.1)" }}
                   >
                     Open workspace
                     <ArrowRight className="w-4 h-4 ml-2" />
@@ -236,7 +255,8 @@ export default function Landing() {
                 <Button
                   size="lg"
                   onClick={login}
-                  className="h-13 px-8 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl w-full sm:w-auto shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-all"
+                  className="h-13 px-8 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl w-full sm:w-auto transition-all hover:-translate-y-0.5"
+                  style={{ boxShadow: "0 4px 20px rgba(201,168,76,0.3), 0 0 40px rgba(201,168,76,0.1)" }}
                 >
                   Get started — it's free
                   <ArrowRight className="w-4 h-4 ml-2" />
@@ -246,7 +266,7 @@ export default function Landing() {
                 size="lg"
                 variant="outline"
                 onClick={() => setShowDemo(true)}
-                className="h-13 px-8 text-base font-semibold rounded-xl w-full sm:w-auto border-white/15 hover:bg-white/5 transition-all"
+                className="h-13 px-8 text-base font-semibold rounded-xl w-full sm:w-auto border-white/15 hover:bg-white/5 hover:border-cyan-400/20 transition-all"
               >
                 Request a Demo
               </Button>
@@ -281,11 +301,13 @@ export default function Landing() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
-            className="relative rounded-2xl overflow-hidden border border-white/10 bg-card/40 shadow-2xl shadow-black/40 aspect-video flex items-center justify-center group cursor-pointer"
+            className="relative rounded-2xl overflow-hidden border border-white/10 bg-card/40 shadow-2xl shadow-black/40 aspect-video flex items-center justify-center group cursor-pointer transition-all duration-300 hover:border-primary/20"
+            style={{ "--hover-shadow": "0 0 60px rgba(201,168,76,0.1)" } as any}
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-cyan-400/3" />
             <div className="relative z-10 flex flex-col items-center gap-4">
-              <div className="w-20 h-20 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+              <div className="w-20 h-20 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center group-hover:bg-primary/20 group-hover:border-primary/50 transition-all duration-300"
+                style={{ boxShadow: "0 0 30px rgba(201,168,76,0.15)" }}>
                 <Play className="w-8 h-8 text-primary ml-1" />
               </div>
               <p className="text-muted-foreground text-sm font-medium">Product demo — 3 min walkthrough</p>
@@ -321,9 +343,9 @@ export default function Landing() {
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.07, duration: 0.5 }}
               >
-                <div className="glass-card h-full p-8 rounded-2xl border border-white/5 hover:-translate-y-1 hover:border-primary/30 transition-all duration-300">
-                  <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center mb-5 border border-primary/10">
-                    <feature.icon className="w-5 h-5 text-primary" />
+                <div className="glass-card shimmer-border h-full p-8 rounded-2xl border border-white/5 hover:-translate-y-1 hover:border-primary/20 transition-all duration-300 group">
+                  <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center mb-5 border border-primary/10 group-hover:border-primary/30 group-hover:bg-primary/15 transition-all duration-300">
+                    <feature.icon className="w-5 h-5 text-primary group-hover:text-primary transition-colors" />
                   </div>
                   <h3 className="text-lg font-bold mb-2 font-display">{feature.title}</h3>
                   <p className="text-muted-foreground text-sm leading-relaxed">{feature.desc}</p>
@@ -343,14 +365,17 @@ export default function Landing() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10 relative">
-            <div className="hidden md:block absolute top-8 left-[22%] right-[22%] h-px bg-gradient-to-r from-primary/0 via-primary/40 to-primary/0" />
+            <div className="hidden md:block absolute top-8 left-[22%] right-[22%] h-px bg-gradient-to-r from-primary/0 via-primary/40 to-cyan-400/20 to-primary/0" />
             {[
               { step: "01", title: "Context Loading", desc: "Submit your query. The system loads relevant Zimbabwean statutes, High Court Rules SI 202/2021, and BLAW 302 principles instantly." },
               { step: "02", title: "Deep Analysis", desc: "Replit AI parses the legal matrix, structures authoritative arguments, and applies the correct procedural framework." },
               { step: "03", title: "Quality Review", desc: "Outputs are cross-checked. Uncertain citations are flagged with [VERIFY] tags — always explicit, never silent." },
             ].map((item, i) => (
               <div key={i} className="relative z-10 flex flex-col items-center text-center">
-                <div className="w-14 h-14 rounded-full bg-background border-2 border-primary flex items-center justify-center text-xl font-bold text-primary font-display mb-5 shadow-[0_0_24px_rgba(201,168,76,0.15)]">
+                <div
+                  className="w-14 h-14 rounded-full bg-background border-2 border-primary flex items-center justify-center text-xl font-bold text-primary font-display mb-5 transition-all duration-300 hover:border-cyan-400 hover:text-cyan-400"
+                  style={{ boxShadow: "0 0 24px rgba(201,168,76,0.15)" }}
+                >
                   {item.step}
                 </div>
                 <h3 className="text-lg font-bold mb-2 font-display">{item.title}</h3>
@@ -368,9 +393,10 @@ export default function Landing() {
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="glass-card rounded-3xl p-12 border border-primary/20 shadow-[0_0_80px_rgba(201,168,76,0.05)]"
+            className="glass-card shimmer-border rounded-3xl p-12 border border-primary/20"
+            style={{ boxShadow: "0 0 80px rgba(201,168,76,0.05), 0 0 0 1px rgba(201,168,76,0.15)" }}
           >
-            <Scale className="w-10 h-10 text-primary mx-auto mb-6" />
+            <Scale className="w-10 h-10 text-primary mx-auto mb-6" style={{ filter: "drop-shadow(0 0 10px rgba(201,168,76,0.5))" }} />
             <h2 className="text-3xl md:text-4xl font-display font-bold mb-4">
               Ready to elevate your practice?
             </h2>
@@ -380,7 +406,8 @@ export default function Landing() {
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               {isAuthenticated ? (
                 <Link href="/chat">
-                  <Button size="lg" className="h-12 px-8 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl shadow-lg shadow-primary/20">
+                  <Button size="lg" className="h-12 px-8 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl"
+                    style={{ boxShadow: "0 4px 20px rgba(201,168,76,0.25)" }}>
                     Open workspace <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
                 </Link>
@@ -388,7 +415,8 @@ export default function Landing() {
                 <Button
                   size="lg"
                   onClick={login}
-                  className="h-12 px-8 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl shadow-lg shadow-primary/20"
+                  className="h-12 px-8 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl"
+                  style={{ boxShadow: "0 4px 20px rgba(201,168,76,0.25)" }}
                 >
                   Get started free <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -397,7 +425,7 @@ export default function Landing() {
                 size="lg"
                 variant="outline"
                 onClick={() => setShowDemo(true)}
-                className="h-12 px-8 font-semibold rounded-xl border-white/15 hover:bg-white/5"
+                className="h-12 px-8 font-semibold rounded-xl border-white/15 hover:bg-white/5 hover:border-cyan-400/20"
               >
                 Request a Demo
               </Button>
