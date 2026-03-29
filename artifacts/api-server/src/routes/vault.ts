@@ -5,6 +5,12 @@ import { eq, and, ilike, or } from "drizzle-orm";
 import { parsePDFBase64, isPDFBuffer, cleanExtractedText } from "../vendor/pdf-parser.js";
 import { fuzzySearch } from "../vendor/fuzzy-search.js";
 import { generateExcerpt } from "../vendor/text-utils.js";
+import { parseDocxBase64, isDocxFile } from "../vendor/docx-parser.js";
+import { diffLines, summarizeDiff, hasMeaningfulChanges } from "../vendor/text-diff.js";
+import { BM25Retriever } from "../vendor/bm25.js";
+import { mergeRankedResults } from "../vendor/priority-queue.js";
+import { chunkForRAG } from "../vendor/text-chunker.js";
+import { parseDates } from "../vendor/date-parser.js";
 
 const router: IRouter = Router();
 
@@ -60,6 +66,7 @@ router.post("/vault/files", async (req, res) => {
       if (isPDFBuffer(pdfBuffer)) {
         const parsed = await parsePDFBase64(pdfBase64);
         extractedContent = cleanExtractedText(parsed.text);
+        const dateResult = parseDates(extractedContent);
         parsedMetadata = {
           pages: parsed.pages,
           wordCount: parsed.wordCount,
@@ -67,10 +74,33 @@ router.post("/vault/files", async (req, res) => {
           title: parsed.metadata.title,
           author: parsed.metadata.author,
           excerpt: generateExcerpt(extractedContent, 300),
+          detectedDates: dateResult.dates.slice(0, 5).map(d => ({ text: d.text, iso: d.isoString, context: d.context })),
+          ragChunks: chunkForRAG(extractedContent, 512).length,
         };
       }
     } catch (pdfErr) {
       req.log.warn({ pdfErr, name }, 'PDF parsing failed, saving without extracted text');
+    }
+  }
+
+  if (pdfBase64 && isDocxFile(name)) {
+    try {
+      const parsed = await parseDocxBase64(pdfBase64);
+      extractedContent = parsed.text;
+      const dateResult = parseDates(extractedContent);
+      parsedMetadata = {
+        wordCount: parsed.wordCount,
+        characterCount: parsed.characterCount,
+        paragraphs: parsed.paragraphs.length,
+        title: parsed.metadata.title,
+        author: parsed.metadata.author,
+        excerpt: generateExcerpt(extractedContent, 300),
+        detectedDates: dateResult.dates.slice(0, 5).map(d => ({ text: d.text, iso: d.isoString, context: d.context })),
+        ragChunks: chunkForRAG(extractedContent, 512).length,
+        docxWarnings: parsed.warnings.length > 0 ? parsed.warnings : undefined,
+      };
+    } catch (docxErr) {
+      req.log.warn({ docxErr, name }, 'DOCX parsing failed, saving without extracted text');
     }
   }
 
@@ -136,6 +166,95 @@ router.delete("/vault/files/:id", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Delete vault file error");
     res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.post("/vault/files/diff", async (req, res) => {
+  const { textA, textB, contextLines } = req.body as {
+    textA: string;
+    textB: string;
+    contextLines?: number;
+  };
+
+  if (!textA || !textB) {
+    res.status(400).json({ error: "Bad Request", message: "textA and textB are required" });
+    return;
+  }
+
+  try {
+    const diffResult = diffLines(textA, textB);
+    const summary = summarizeDiff(diffResult);
+    const meaningful = hasMeaningfulChanges(diffResult, 0.01);
+
+    res.json({
+      changes: diffResult.changes,
+      additions: diffResult.additions,
+      deletions: diffResult.deletions,
+      unchanged: diffResult.unchanged,
+      summary,
+      hasMeaningfulChanges: meaningful,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Vault diff error");
+    res.status(500).json({ error: "Internal Server Error", message: "Failed to diff documents" });
+  }
+});
+
+router.post("/vault/files/search-bm25", async (req, res) => {
+  const { userId, query, topK } = req.body as {
+    userId?: string;
+    query: string;
+    topK?: number;
+  };
+
+  if (!query) {
+    res.status(400).json({ error: "Bad Request", message: "query is required" });
+    return;
+  }
+
+  try {
+    const conditions = userId
+      ? [eq(vaultFilesTable.userId, userId)]
+      : [];
+    const files = await db
+      .select()
+      .from(vaultFilesTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .limit(200);
+
+    const docsWithContent = files.filter(f => !!f.content);
+    if (docsWithContent.length === 0) {
+      res.json({ results: [] });
+      return;
+    }
+
+    const retriever = new BM25Retriever();
+    retriever.addDocuments(docsWithContent.map(f => ({ id: f.id, text: f.content! })));
+    const bm25Hits = retriever.search(query, topK ?? 10);
+
+    const n = topK ?? 10;
+    const rankedResults = mergeRankedResults(
+      [{ results: bm25Hits, weight: 1.0 }],
+      n
+    );
+
+    res.json({
+      results: rankedResults.slice(0, n).map(r => {
+        const file = docsWithContent.find(f => f.id === r.id);
+        return {
+          id: r.id,
+          score: r.score,
+          name: file?.name,
+          fileType: file?.fileType,
+          excerpt: file?.content
+            ? generateExcerpt(file.content, 200)
+            : undefined,
+        };
+      }),
+    });
+  } catch (err) {
+    req.log.error({ err }, "BM25 vault search error");
+    res.status(500).json({ error: "Internal Server Error", message: "Search failed" });
   }
 });
 

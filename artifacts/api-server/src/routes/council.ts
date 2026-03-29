@@ -5,7 +5,7 @@ import { consultationsTable, messagesTable, casesTable, statutesTable } from "@w
 import { eq, desc, ilike, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { searchZimLII, buildZimLIISearchUrl } from "../lib/zimliiScraper.js";
-import { retrieveCivilProcedureContext, isCivilProcedureQuery } from "../lib/aiPipeline.js";
+import { retrieveCivilProcedureContext, isCivilProcedureQuery, buildSourceSnippet } from "../lib/aiPipeline.js";
 
 const router: IRouter = Router();
 
@@ -396,15 +396,21 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
         dbStatutes: dbStatutes.map(s => ({ title: s.title, chapter: s.chapter })),
         zimliiHits: zimliiResult?.results.length ?? 0,
         zimliiSource: zimliiResult?.source ?? "empty",
-        zimliiResults: (zimliiResult?.results ?? []).slice(0, 8).map(r => ({
-          title: r.title,
-          url: r.url,
-          court: r.court,
-          date: r.date,
-          citation: r.citation,
-          documentType: r.documentType,
-          snippet: r.snippet?.slice(0, 200),
-        })),
+        zimliiResults: (zimliiResult?.results ?? []).slice(0, 8).map(r => {
+          const queryTerms = trimmedQuery.trim().split(/\s+/).filter(t => t.length >= 3);
+          const highlightedSnippet = r.snippet
+            ? buildSourceSnippet(r.snippet, queryTerms)
+            : undefined;
+          return {
+            title: r.title,
+            url: r.url,
+            court: r.court,
+            date: r.date,
+            citation: r.citation,
+            documentType: r.documentType,
+            snippet: highlightedSnippet ?? r.snippet?.slice(0, 200),
+          };
+        }),
       }
     })}\n\n`);
 

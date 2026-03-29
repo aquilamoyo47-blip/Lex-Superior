@@ -4,8 +4,91 @@ import { statutesTable, casesTable, notesTable, updatesTable } from "@workspace/
 import { ilike, or, eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { fuzzySearch } from "../vendor/fuzzy-search.js";
+import { levenshteinSimilarity } from "../vendor/levenshtein.js";
+import { Trie } from "../vendor/trie.js";
+import { BM25Retriever } from "../vendor/bm25.js";
+import { TfIdfVectoriser } from "../vendor/tfidf-vectoriser.js";
+import { cosineSimilarity } from "../vendor/cosine-similarity.js";
+import { mergeRankedResults } from "../vendor/priority-queue.js";
 
 const router: IRouter = Router();
+
+function hybridSearch<T extends Record<string, unknown>>(
+  items: T[],
+  query: string,
+  textFields: (keyof T)[]
+): T[] {
+  if (items.length === 0) return [];
+
+  const docs = items.map(item =>
+    textFields.map(f => String(item[f] ?? "")).join(" ")
+  );
+  const docEntries = docs.map((text, i) => ({ id: String(i), text }));
+
+  const retriever = new BM25Retriever();
+  retriever.addDocuments(docEntries);
+  const bm25Results = retriever.search(query, items.length);
+
+  const vectoriser = new TfIdfVectoriser();
+  vectoriser.addDocuments(docEntries);
+  const tfidfResults = vectoriser.search(query, items.length);
+
+  const tfidfNorm = tfidfResults.length > 0
+    ? tfidfResults.reduce((m, r) => Math.max(m, r.score), 0) || 1
+    : 1;
+
+  const tfidfHits = tfidfResults.map(r => ({
+    ...r,
+    score: r.score / tfidfNorm,
+  }));
+
+  const merged = mergeRankedResults(
+    [
+      { results: bm25Results, weight: 0.6 },
+      { results: tfidfHits, weight: 0.4 },
+    ],
+    100
+  );
+
+  return merged
+    .filter(r => r.score > 0)
+    .map(r => items[parseInt(r.id)])
+    .filter(Boolean) as T[];
+}
+
+function correctTypo(query: string, candidates: string[]): { corrected: string; score: number } | null {
+  let best: { corrected: string; score: number } | null = null;
+  for (const candidate of candidates) {
+    const score = levenshteinSimilarity(query.toLowerCase(), candidate.toLowerCase());
+    if (score > 0.7 && (!best || score > best.score)) {
+      best = { corrected: candidate, score };
+    }
+  }
+  return best;
+}
+
+function charBigramVector(text: string, vocab: string[]): number[] {
+  const bigrams = new Set<string>();
+  for (let i = 0; i < text.length - 1; i++) bigrams.add(text[i] + text[i + 1]);
+  return vocab.map(b => (bigrams.has(b) ? 1 : 0));
+}
+
+function bigramCosineSimilarity(a: string, b: string): number {
+  const combined = new Set<string>();
+  for (let i = 0; i < a.length - 1; i++) combined.add(a[i] + a[i + 1]);
+  for (let i = 0; i < b.length - 1; i++) combined.add(b[i] + b[i + 1]);
+  const vocab = Array.from(combined);
+  const va = charBigramVector(a, vocab);
+  const vb = charBigramVector(b, vocab);
+  return cosineSimilarity(va, vb);
+}
+
+function rankByCharBigram(query: string, items: Array<{ id: string; text: string }>, topN: number): Array<{ id: string; score: number }> {
+  return items
+    .map(item => ({ id: item.id, score: bigramCosineSimilarity(query.toLowerCase(), item.text.toLowerCase().slice(0, 100)) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN);
+}
 
 router.get("/library/statutes", async (req, res) => {
   const { category, search } = req.query as Record<string, string>;
@@ -22,16 +105,30 @@ router.get("/library/statutes", async (req, res) => {
       .limit(500);
 
     if (search && search.trim().length >= 2) {
-      const results = fuzzySearch(statutes, search, {
-        keys: ['title', 'summary', 'category'],
-        threshold: 0.45,
-        limit: 100,
+      const hybrid = hybridSearch(statutes as unknown as Record<string, unknown>[], search, ['title', 'summary', 'category']);
+      const hybridStatutes = hybrid.length >= 3 ? hybrid : (() => {
+        const results = fuzzySearch(statutes, search, {
+          keys: ['title', 'summary', 'category'],
+          threshold: 0.45,
+          limit: 100,
+        });
+        return results.map(r => r.item);
+      })();
+
+      const typoSuggestion = hybridStatutes.length === 0
+        ? correctTypo(search, statutes.map(s => s.title).filter(Boolean) as string[])
+        : null;
+
+      res.json({
+        statutes: hybridStatutes.slice(0, 100),
+        total: hybridStatutes.slice(0, 100).length,
+        fuzzySearch: true,
+        hybridSearch: true,
+        typoSuggestion,
       });
-      const fuzzyStatutes = results.map(r => r.item);
-      res.json({ statutes: fuzzyStatutes, total: fuzzyStatutes.length, fuzzySearch: true });
     } else {
       const limited = statutes.slice(0, 100);
-      res.json({ statutes: limited, total: limited.length, fuzzySearch: false });
+      res.json({ statutes: limited, total: limited.length, fuzzySearch: false, hybridSearch: false });
     }
   } catch (err) {
     req.log.error({ err }, "List statutes error");
@@ -67,16 +164,30 @@ router.get("/library/cases", async (req, res) => {
       .limit(500);
 
     if (search && search.trim().length >= 2) {
-      const results = fuzzySearch(cases, search, {
-        keys: ['citation', 'title', 'principle', 'headnote'],
-        threshold: 0.45,
-        limit: 100,
+      const hybrid = hybridSearch(cases as unknown as Record<string, unknown>[], search, ['citation', 'title', 'principle', 'headnote']);
+      const hybridCases = hybrid.length >= 3 ? hybrid : (() => {
+        const results = fuzzySearch(cases, search, {
+          keys: ['citation', 'title', 'principle', 'headnote'],
+          threshold: 0.45,
+          limit: 100,
+        });
+        return results.map(r => r.item);
+      })();
+
+      const typoSuggestion = hybridCases.length === 0
+        ? correctTypo(search, cases.flatMap(c => [c.title, c.citation]).filter(Boolean) as string[])
+        : null;
+
+      res.json({
+        cases: hybridCases.slice(0, 100),
+        total: hybridCases.slice(0, 100).length,
+        fuzzySearch: true,
+        hybridSearch: true,
+        typoSuggestion,
       });
-      const fuzzyCases = results.map(r => r.item);
-      res.json({ cases: fuzzyCases, total: fuzzyCases.length, fuzzySearch: true });
     } else {
       const limited = cases.slice(0, 100);
-      res.json({ cases: limited, total: limited.length, fuzzySearch: false });
+      res.json({ cases: limited, total: limited.length, fuzzySearch: false, hybridSearch: false });
     }
 
     void tags;
@@ -141,6 +252,48 @@ router.get("/library/updates", async (req, res) => {
     res.json({ updates });
   } catch (err) {
     req.log.error({ err }, "List updates error");
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/library/autocomplete", async (req, res) => {
+  const { q, kind } = req.query as Record<string, string>;
+
+  if (!q || q.trim().length < 2) {
+    res.status(400).json({ error: "Bad Request", message: "q must be at least 2 characters" });
+    return;
+  }
+
+  try {
+    const trie = new Trie<{ kind: string }>();
+    const limit = 200;
+
+    if (!kind || kind === "statutes") {
+      const statutes = await db.select({ title: statutesTable.title }).from(statutesTable).limit(limit);
+      statutes.forEach(s => { if (s.title) trie.insert(s.title, { kind: "statute" }); });
+    }
+
+    if (!kind || kind === "cases") {
+      const cases = await db.select({ title: casesTable.title, citation: casesTable.citation }).from(casesTable).limit(limit);
+      cases.forEach(c => {
+        if (c.title) trie.insert(c.title, { kind: "case" });
+        if (c.citation) trie.insert(c.citation, { kind: "case_citation" });
+      });
+    }
+
+    const trieResults = trie.search(q.trim(), 20);
+    const bigramRanked = rankByCharBigram(
+      q.trim(),
+      trieResults.map(r => ({ id: r.value, text: r.value })),
+      10
+    );
+    const suggestions = bigramRanked
+      .map(r => trieResults.find(t => t.value === r.id))
+      .filter(Boolean);
+
+    res.json({ suggestions, query: q.trim() });
+  } catch (err) {
+    req.log.error({ err }, "Autocomplete error");
     res.status(500).json({ error: "Internal Server Error" });
   }
 });

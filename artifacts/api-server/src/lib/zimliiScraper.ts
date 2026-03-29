@@ -6,6 +6,8 @@
  */
 
 import * as cheerio from "cheerio";
+import { htmlToLegalText } from "../vendor/html-to-text.js";
+import { extractTables } from "../vendor/table-extractor.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -479,10 +481,31 @@ export async function searchZimLII(query: string): Promise<ZimLIISearchResult> {
     const liveResults = parseSearchHtml(html);
 
     if (liveResults.length > 0) {
+      const cleanedText = htmlToLegalText(html);
+      const tables = extractTables(html);
+
+      const enrichedResults = liveResults.map(doc => {
+        if (!doc.snippet && cleanedText.length > 0) {
+          const titleIdx = cleanedText.indexOf(doc.title);
+          if (titleIdx !== -1) {
+            doc.snippet = cleanedText.slice(titleIdx + doc.title.length, titleIdx + doc.title.length + 300).trim();
+          }
+        }
+        return doc;
+      });
+
+      if (tables.count > 0) {
+        enrichedResults.forEach((doc, i) => {
+          if (i < tables.tables.length && tables.tables[i]?.rawText) {
+            doc.snippet = (doc.snippet || '') + (doc.snippet ? ' ' : '') + tables.tables[i].rawText.slice(0, 200);
+          }
+        });
+      }
+
       const result: ZimLIISearchResult = {
         query,
-        results: liveResults,
-        totalResults: liveResults.length,
+        results: enrichedResults,
+        totalResults: enrichedResults.length,
         cached: false,
         source: "live",
         timestamp: ts(),
@@ -512,4 +535,19 @@ export async function searchZimLII(query: string): Promise<ZimLIISearchResult> {
 
 export function buildZimLIISearchUrl(query: string): string {
   return `https://zimlii.org/search/?q=${encodeURIComponent(query)}`;
+}
+
+// ─── HTML cleanup for ZimLII scraped pages ────────────────────────────────────
+
+export function cleanZimLIIHtml(html: string): string {
+  return htmlToLegalText(html);
+}
+
+export function extractDocumentTables(html: string): string {
+  const result = extractTables(html);
+  if (result.count === 0) return '';
+  return result.tables
+    .map(t => t.rawText)
+    .filter(Boolean)
+    .join('\n\n---\n\n');
 }

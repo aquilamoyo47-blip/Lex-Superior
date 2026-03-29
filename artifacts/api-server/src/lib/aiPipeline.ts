@@ -9,6 +9,14 @@ import { CircuitBreaker, CircuitOpenError } from "../vendor/circuit-breaker.js";
 import { db } from "@workspace/db";
 import { notesTable } from "@workspace/db";
 import { ilike, or, sql } from "drizzle-orm";
+import { parseCitations } from "../vendor/legal-citation-parser.js";
+import { extractLegalKeywords } from "../vendor/keyword-extractor.js";
+import { retryWithLogging } from "../vendor/retry-backoff.js";
+import { aiProviderLimiter } from "../vendor/token-bucket.js";
+import { generateSnippet } from "../vendor/text-highlighter.js";
+import { parseDates } from "../vendor/date-parser.js";
+import { chunkForRAG } from "../vendor/text-chunker.js";
+import { StreamEventEmitter } from "../vendor/event-emitter.js";
 
 const DIFY_API_BASE_URL = process.env.DIFY_API_BASE_URL || 'https://api.dify.ai/v1';
 const DIFY_API_KEY = process.env.DIFY_API_KEY || '';
@@ -334,6 +342,11 @@ export function extractDetectedStatutes(content: string): string[] {
   const entities = extractEntities(content);
   const fromNlp = [...entities.statutes, ...entities.rules];
 
+  const parsed = parseCitations(content);
+  const fromCitationParser = parsed.citations
+    .filter(c => c.type === 'statute' || c.type === 'si' || c.type === 'constitutional')
+    .map(c => c.normalized);
+
   const legacyPatterns = [
     /High Court Rules?(?:\s+SI\s+\d+\s+of\s+\d+)?/gi,
     /Constitution(?:\s+of\s+Zimbabwe)?(?:\s+2013)?/gi,
@@ -347,17 +360,49 @@ export function extractDetectedStatutes(content: string): string[] {
     if (matches) fromLegacy.push(...matches);
   }
 
-  return [...new Set([...fromNlp, ...fromLegacy])].slice(0, 10);
+  return [...new Set([...fromNlp, ...fromCitationParser, ...fromLegacy])].slice(0, 10);
 }
 
 export function extractSuggestedCases(content: string): string[] {
   const entities = extractEntities(content);
   const fromNlp = entities.cases;
 
+  const parsed = parseCitations(content);
+  const fromCitationParser = parsed.citations
+    .filter(c => c.type === 'case')
+    .map(c => c.normalized);
+
   const casePattern = /[A-Z][a-z]+ v [A-Z][a-z]+(?:\s+\d{4}\s*\(\d+\)\s+ZLR\s+\d+)?/g;
   const fromLegacy = content.match(casePattern) || [];
 
-  return [...new Set([...fromNlp, ...fromLegacy])].slice(0, 8);
+  return [...new Set([...fromNlp, ...fromCitationParser, ...fromLegacy])].slice(0, 8);
+}
+
+export function extractKeyTopics(content: string): string[] {
+  return extractLegalKeywords(content, 8);
+}
+
+export function extractLegalDates(content: string): Array<{ text: string; isoString: string; context?: string }> {
+  const result = parseDates(content);
+  return result.dates.map(d => ({ text: d.text, isoString: d.isoString, context: d.context }));
+}
+
+export function buildSourceSnippet(sourceText: string, queryTerms: string[]): string {
+  if (!sourceText || queryTerms.length === 0) return sourceText.slice(0, 300);
+  const result = generateSnippet(sourceText, queryTerms, {
+    maxSnippetLength: 300,
+    contextChars: 60,
+    markTemplate: (m) => `**${m}**`,
+  });
+  return result.snippet;
+}
+
+export function chunkContentForRAG(text: string, maxTokens = 512): Array<{ text: string; index: number; tokenEstimate: number }> {
+  return chunkForRAG(text, maxTokens).map(c => ({ text: c.text, index: c.index, tokenEstimate: c.tokenEstimate }));
+}
+
+export function createStreamEventBus(): StreamEventEmitter {
+  return new StreamEventEmitter();
 }
 
 export interface PipelineResult {
@@ -368,6 +413,8 @@ export interface PipelineResult {
   detectedStatutes: string[];
   suggestedCases: string[];
   applicableRules: string[];
+  keyTopics: string[];
+  legalDates: Array<{ text: string; isoString: string; context?: string }>;
   fromCache: boolean;
   tokenCount?: number;
   chunks?: number;
@@ -539,11 +586,28 @@ export async function runLegalPipeline(
   const available = getAvailableProviders();
   logger.info({ count: available.length, concurrency: PARALLEL_CONCURRENCY }, "Dispatching to providers in parallel");
 
-  const { content: rawContent, providerName } = await dispatchParallel(available, (state) =>
-    state.config.callFn(messages)
+  const providerNames = available.map(p => p.config.name).join(',') || 'none';
+  const rateLimitKey = `pipeline:${practiceArea}:${providerNames}`;
+  const rateLimitResult = aiProviderLimiter.tryConsume(rateLimitKey, 1);
+  if (!rateLimitResult.allowed) {
+    logger.warn({ retryAfterMs: rateLimitResult.retryAfterMs, rateLimitKey }, "AI provider rate limited");
+    throw Object.assign(new Error("Rate limit exceeded. Please wait before making another request."), {
+      status: 429,
+      retryAfterMs: rateLimitResult.retryAfterMs,
+    });
+  }
+
+  const { content: rawContent, providerName } = await retryWithLogging(
+    'runLegalPipeline',
+    () => dispatchParallel(available, (state) => state.config.callFn(messages)),
+    { retries: 2, minTimeout: 1000, maxTimeout: 15000 }
   );
 
-  const content = await qualityReview(rawContent, moduleContext || undefined);
+  const content = await retryWithLogging(
+    'qualityReview:runLegalPipeline',
+    () => qualityReview(rawContent, moduleContext || undefined),
+    { retries: 1, minTimeout: 500, maxTimeout: 3000 }
+  );
 
   const plainText = markdownToPlainText(content);
   const flags = extractVerifyFlags(content);
@@ -552,6 +616,8 @@ export async function runLegalPipeline(
   const applicableRules = detectedStatutes.filter(
     (s) => s.toLowerCase().includes("rule") || s.toLowerCase().includes("SI")
   );
+  const keyTopics = extractKeyTopics(plainText);
+  const legalDates = extractLegalDates(content);
   const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
@@ -561,6 +627,8 @@ export async function runLegalPipeline(
     detectedStatutes,
     suggestedCases,
     applicableRules,
+    keyTopics,
+    legalDates,
     fromCache: false,
     tokenCount,
     chunks,
@@ -605,6 +673,18 @@ export async function streamLegalPipeline(
   ];
 
   const available = getAvailableProviders();
+
+  const streamProviderNames = available.map(p => p.config.name).join(',') || 'none';
+  const streamRateLimitKey = `stream:${practiceArea}:${streamProviderNames}`;
+  const rateLimitResult = aiProviderLimiter.tryConsume(streamRateLimitKey, 1);
+  if (!rateLimitResult.allowed) {
+    logger.warn({ retryAfterMs: rateLimitResult.retryAfterMs, streamRateLimitKey }, "Stream rate limited");
+    throw Object.assign(new Error("Rate limit exceeded. Please wait before making another request."), {
+      status: 429,
+      retryAfterMs: rateLimitResult.retryAfterMs,
+    });
+  }
+
   logger.info(
     { count: available.length, concurrency: PARALLEL_CONCURRENCY },
     "Streaming: dispatching to providers in parallel"
@@ -612,7 +692,11 @@ export async function streamLegalPipeline(
 
   const { content: fullContent, providerName } = await dispatchParallelStream(available, messages, onChunk);
 
-  const reviewedContent = await qualityReview(fullContent, moduleContext || undefined);
+  const reviewedContent = await retryWithLogging(
+    'qualityReview:streamLegalPipeline',
+    () => qualityReview(fullContent, moduleContext || undefined),
+    { retries: 1, minTimeout: 500, maxTimeout: 3000 }
+  );
   if (reviewedContent !== fullContent) {
     onChunk("\n\n---\n*Quality review applied [VERIFY] flags to uncertain citations.*");
   }
@@ -625,6 +709,8 @@ export async function streamLegalPipeline(
   const applicableRules = detectedStatutes.filter(
     (s) => s.toLowerCase().includes("rule") || s.toLowerCase().includes("SI")
   );
+  const keyTopics = extractKeyTopics(plainText);
+  const legalDates = extractLegalDates(finalContent);
   const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
@@ -634,6 +720,8 @@ export async function streamLegalPipeline(
     detectedStatutes,
     suggestedCases,
     applicableRules,
+    keyTopics,
+    legalDates,
     fromCache: false,
     tokenCount,
     chunks,
@@ -659,14 +747,24 @@ export async function runDifyPipeline(
 
   logger.info({ practiceArea, conversationId }, 'Running Dify AI pipeline');
 
-  const { content: rawContent, conversationId: difyConversationId } = await callDifyChat(fullQuery, conversationId);
-  const content = await qualityReview(rawContent);
+  const { content: rawContent, conversationId: difyConversationId } = await retryWithLogging(
+    'callDifyChat',
+    () => callDifyChat(fullQuery, conversationId),
+    { retries: 2, minTimeout: 1000, maxTimeout: 15000 }
+  );
+  const content = await retryWithLogging(
+    'qualityReview:runDifyPipeline',
+    () => qualityReview(rawContent),
+    { retries: 1, minTimeout: 500, maxTimeout: 3000 }
+  );
 
   const plainText = markdownToPlainText(content);
   const flags = extractVerifyFlags(content);
   const detectedStatutes = extractDetectedStatutes(content);
   const suggestedCases = extractSuggestedCases(content);
   const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const keyTopics = extractKeyTopics(plainText);
+  const legalDates = extractLegalDates(content);
   const tokenCount = countTokens(plainText);
 
   return {
@@ -676,6 +774,8 @@ export async function runDifyPipeline(
     detectedStatutes,
     suggestedCases,
     applicableRules,
+    keyTopics,
+    legalDates,
     fromCache: false,
     tokenCount,
     chunks,

@@ -2,7 +2,8 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { consultationsTable, messagesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { streamLegalPipeline, getProviderStatus } from "../lib/aiPipeline";
+import { streamLegalPipeline, getProviderStatus, createStreamEventBus } from "../lib/aiPipeline";
+import { retryWithLogging } from "../vendor/retry-backoff.js";
 import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
@@ -54,15 +55,23 @@ router.post("/chat", async (req, res) => {
     res.write(`data: ${JSON.stringify({ consultationId: activeConsultationId })}\n\n`);
 
     const startTime = Date.now();
+    const streamBus = createStreamEventBus();
 
-    const result = await streamLegalPipeline(
-      message,
-      practiceArea,
-      conversationHistory,
-      (chunk) => {
-        res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
-      }
+    const result = await retryWithLogging(
+      'streamLegalPipeline',
+      () => streamLegalPipeline(
+        message,
+        practiceArea,
+        conversationHistory,
+        (chunk) => {
+          res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+        }
+      ),
+      { retries: 1, minTimeout: 2000, maxTimeout: 10000 }
     );
+
+    streamBus.emit("done", result.content);
+    streamBus.removeAllListeners();
 
     const responseTimeMs = Date.now() - startTime;
 
@@ -89,16 +98,24 @@ router.post("/chat", async (req, res) => {
       detectedStatutes: result.detectedStatutes,
       suggestedCases: result.suggestedCases,
       applicableRules: result.applicableRules,
+      keyTopics: result.keyTopics,
+      legalDates: result.legalDates,
       consultationId: activeConsultationId,
     })}\n\n`);
 
     res.end();
-  } catch (err) {
+  } catch (err: unknown) {
+    const errObj = err as { status?: number; message?: string; retryAfterMs?: number };
     req.log.error({ err }, "Chat error");
     if (!res.headersSent) {
-      res.status(500).json({ error: "Internal Server Error", message: (err as Error).message });
+      const status = errObj.status === 429 ? 429 : 500;
+      res.status(status).json({
+        error: status === 429 ? "Too Many Requests" : "Internal Server Error",
+        message: errObj.message || "An unexpected error occurred",
+        ...(errObj.retryAfterMs ? { retryAfterMs: errObj.retryAfterMs } : {}),
+      });
     } else {
-      res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: errObj.message || "An unexpected error occurred" })}\n\n`);
       res.end();
     }
   }
