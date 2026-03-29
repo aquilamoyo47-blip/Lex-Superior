@@ -17,6 +17,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "GitHub Sync"
+
+[[workflows.workflow]]
+name = "GitHub Sync"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/github-sync-loop.sh"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -32,3 +52,6 @@ channel = "stable-25_05"
 
 [userenv.development]
 WEBHOOK_SECRET = "dev-webhook-secret-change-in-production"
+
+[userenv.shared]
+GITHUB_REPO_URL = "https://github.com/aquilamoyo47-blip/Lex-Superior"
