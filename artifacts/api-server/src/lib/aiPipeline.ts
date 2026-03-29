@@ -1,15 +1,16 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
+import { db } from "@workspace/db";
+import { notesTable, statutesTable, casesTable } from "@workspace/db";
+import { ilike, or, sql } from "drizzle-orm";
 import { LRUCache } from "../vendor/lru-cache.js";
 import { countTokens, truncateToTokenLimit } from "../vendor/token-counter.js";
 import { markdownToPlainText } from "../vendor/markdown-parser.js";
 import { chunkText } from "../vendor/sentence-splitter.js";
 import { extractEntities } from "../vendor/nlp-entity.js";
 import { CircuitBreaker, CircuitOpenError } from "../vendor/circuit-breaker.js";
-import { db } from "@workspace/db";
-import { notesTable } from "@workspace/db";
-import { ilike, or, sql } from "drizzle-orm";
-import { parseCitations } from "../vendor/legal-citation-parser.js";
+import { parseCitations, annotateCitationsInQuery } from "../vendor/legal-citation-parser.js";
+import { tagStatutesInText, buildStatuteContext, getStatuteNames, suggestAdditionalStatutes } from "../vendor/statute-tagger.js";
 import { extractLegalKeywords } from "../vendor/keyword-extractor.js";
 import { retryWithLogging } from "../vendor/retry-backoff.js";
 import { aiProviderLimiter } from "../vendor/token-bucket.js";
@@ -306,6 +307,106 @@ async function dispatchParallelStream(
   }
 }
 
+interface LibraryCacheEntry {
+  title: string;
+  summary?: string | null;
+  chapter?: string | null;
+  citation?: string;
+  principle?: string | null;
+}
+
+async function fetchLibraryEntriesForFallback(query: string, practiceArea: string): Promise<LibraryCacheEntry[]> {
+  try {
+    const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+    const searchTerm = `%${keywords[0] || practiceArea}%`;
+
+    const [statutes, cases] = await Promise.all([
+      db.select({
+        title: statutesTable.title,
+        chapter: statutesTable.chapter,
+        summary: statutesTable.summary,
+      }).from(statutesTable)
+        .where(
+          or(
+            ilike(statutesTable.title, searchTerm),
+            ilike(statutesTable.category, `%${practiceArea}%`),
+            ilike(statutesTable.summary, searchTerm),
+          )
+        )
+        .limit(3),
+      db.select({
+        title: casesTable.title,
+        citation: casesTable.citation,
+        principle: casesTable.principle,
+      }).from(casesTable)
+        .where(
+          or(
+            ilike(casesTable.title, searchTerm),
+            ilike(casesTable.principle, searchTerm),
+          )
+        )
+        .limit(2),
+    ]);
+
+    const entries: LibraryCacheEntry[] = [
+      ...statutes.map(s => ({ title: s.title, chapter: s.chapter, summary: s.summary })),
+      ...cases.map(c => ({ title: c.title, citation: c.citation, principle: c.principle })),
+    ];
+
+    return entries;
+  } catch (err) {
+    logger.warn({ err }, "Library lookup for fallback failed — returning empty entries");
+    return [];
+  }
+}
+
+function buildFallbackResponse(
+  query: string,
+  practiceArea: string,
+  annotated: ReturnType<typeof annotateCitationsInQuery>,
+  tagged: ReturnType<typeof tagStatutesInText>,
+  libraryEntries: LibraryCacheEntry[] = []
+): string {
+  const citationLines = annotated.citations.length > 0
+    ? `\n\n**Citations detected in your query:**\n${annotated.citations.map(c => `- ${c.normalized} (${c.type})`).join('\n')}`
+    : '';
+  const statuteLines = tagged.length > 0
+    ? `\n\n**Relevant legislation for ${practiceArea} matters:**\n${tagged.slice(0, 5).map(t => `- ${t.statute.fullTitle}`).join('\n')}`
+    : '';
+  const suggestions = suggestAdditionalStatutes(query);
+  const suggestionLines = suggestions.length > 0
+    ? `\n\n**Consider also:**\n${suggestions.map(s => `- ${s}`).join('\n')}`
+    : '';
+
+  let librarySection = '';
+  if (libraryEntries.length > 0) {
+    const lines = libraryEntries.slice(0, 4).map(entry => {
+      const ref = entry.chapter ? ` [${entry.chapter}]` : entry.citation ? ` (${entry.citation})` : '';
+      const summary = entry.summary || entry.principle || '';
+      return `- **${entry.title}${ref}**${summary ? ': ' + summary.slice(0, 150) : ''}`;
+    });
+    librarySection = `\n\n**Relevant library references found:**\n${lines.join('\n')}`;
+  }
+
+  return `> **Notice:** The AI assistant is temporarily unavailable. The following is a partial response assembled from local legal reference data. Please retry shortly for a full AI-assisted answer.
+
+---
+
+**Partial Legal Research Assistance — ${practiceArea} Law**
+
+Your query has been analysed using local legal NLP tools. Here is what was identified:
+${citationLines}${statuteLines}${librarySection}${suggestionLines}
+
+**Guidance:**
+Based on the citations and statutes detected, please consult the relevant provisions directly. For civil procedure matters in Zimbabwe, the primary references are the **High Court Rules SI 202 of 2021** and the **High Court Act [Chapter 7:06]**. For constitutional matters, refer to the **Constitution of Zimbabwe 2013**.
+
+If you are seeking procedural guidance, ensure you review the applicable Order and Rule under the High Court Rules. If statute-specific questions arise, the relevant Chapter of the Laws of Zimbabwe should be consulted alongside any amending Statutory Instruments.
+
+---
+
+*This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner. Full AI analysis will resume when the service recovers.*`;
+}
+
 async function qualityReview(content: string, moduleContext?: string): Promise<string> {
   try {
     const reviewSystemPrompt = moduleContext
@@ -344,7 +445,7 @@ export function extractDetectedStatutes(content: string): string[] {
 
   const parsed = parseCitations(content);
   const fromCitationParser = parsed.citations
-    .filter(c => c.type === 'statute' || c.type === 'si' || c.type === 'constitutional')
+    .filter(c => c.type === 'statute' || c.type === 'statutory_instrument' || c.type === 'constitutional')
     .map(c => c.normalized);
 
   const legacyPatterns = [
@@ -564,7 +665,15 @@ export async function runLegalPipeline(
     return { ...cached.result, fromCache: true };
   }
 
-  const { processedQuery, chunks } = preprocessQuery(query);
+  const annotated = annotateCitationsInQuery(query);
+  const tagged = tagStatutesInText(query);
+  const statuteContext = buildStatuteContext(tagged);
+
+  const { processedQuery, chunks } = preprocessQuery(annotated.annotatedQuery);
+
+  const enrichedUserContent = statuteContext
+    ? `Practice Area: ${practiceArea}\n\n${processedQuery}\n\n${statuteContext}`
+    : `Practice Area: ${practiceArea}\n\n${processedQuery}`;
 
   const moduleContext = isCivilProcedureQuery(query)
     ? await retrieveCivilProcedureContext(query)
@@ -580,7 +689,7 @@ export async function runLegalPipeline(
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: "user", content: `Practice Area: ${practiceArea}\n\n${processedQuery}` },
+    { role: "user", content: enrichedUserContent },
   ];
 
   const available = getAvailableProviders();
@@ -597,11 +706,37 @@ export async function runLegalPipeline(
     });
   }
 
-  const { content: rawContent, providerName } = await retryWithLogging(
-    'runLegalPipeline',
-    () => dispatchParallel(available, (state) => state.config.callFn(messages)),
-    { retries: 2, minTimeout: 1000, maxTimeout: 15000 }
-  );
+  let rawContent: string;
+  let providerName: string;
+
+  try {
+    const result = await retryWithLogging(
+      'runLegalPipeline',
+      () => dispatchParallel(available, (state) => state.config.callFn(messages)),
+      { retries: 2, minTimeout: 1000, maxTimeout: 15000 }
+    );
+    rawContent = result.content;
+    providerName = result.providerName;
+  } catch (err) {
+    logger.error({ err }, "All AI providers failed — returning fallback response");
+    const [libraryEntries] = await Promise.all([
+      fetchLibraryEntriesForFallback(query, practiceArea),
+    ]);
+    const fallbackContent = buildFallbackResponse(query, practiceArea, annotated, tagged, libraryEntries);
+    const statutes = getStatuteNames(tagged);
+    return {
+      content: fallbackContent,
+      providerUsed: "Local NLP Fallback",
+      flags: [],
+      detectedStatutes: [...annotated.statutes, ...statutes],
+      suggestedCases: annotated.caseRefs,
+      applicableRules: [],
+      keyTopics: [],
+      legalDates: [],
+      fromCache: false,
+      chunks,
+    };
+  }
 
   const content = await retryWithLogging(
     'qualityReview:runLegalPipeline',
@@ -653,7 +788,15 @@ export async function streamLegalPipeline(
     return { ...cached.result, fromCache: true };
   }
 
-  const { processedQuery, chunks } = preprocessQuery(query);
+  const annotated = annotateCitationsInQuery(query);
+  const tagged = tagStatutesInText(query);
+  const statuteContext = buildStatuteContext(tagged);
+
+  const { processedQuery, chunks } = preprocessQuery(annotated.annotatedQuery);
+
+  const enrichedUserContent = statuteContext
+    ? `Practice Area: ${practiceArea}\n\n${processedQuery}\n\n${statuteContext}`
+    : `Practice Area: ${practiceArea}\n\n${processedQuery}`;
 
   const moduleContext = isCivilProcedureQuery(query)
     ? await retrieveCivilProcedureContext(query)
@@ -669,7 +812,7 @@ export async function streamLegalPipeline(
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: "user", content: `Practice Area: ${practiceArea}\n\n${processedQuery}` },
+    { role: "user", content: enrichedUserContent },
   ];
 
   const available = getAvailableProviders();
@@ -690,7 +833,32 @@ export async function streamLegalPipeline(
     "Streaming: dispatching to providers in parallel"
   );
 
-  const { content: fullContent, providerName } = await dispatchParallelStream(available, messages, onChunk);
+  let fullContent: string;
+  let providerName: string;
+
+  try {
+    const result = await dispatchParallelStream(available, messages, onChunk);
+    fullContent = result.content;
+    providerName = result.providerName;
+  } catch (err) {
+    logger.error({ err }, "All AI stream providers failed — returning fallback response");
+    const libraryEntries = await fetchLibraryEntriesForFallback(query, practiceArea);
+    const fallbackContent = buildFallbackResponse(query, practiceArea, annotated, tagged, libraryEntries);
+    onChunk(fallbackContent);
+    const statutes = getStatuteNames(tagged);
+    return {
+      content: fallbackContent,
+      providerUsed: "Local NLP Fallback",
+      flags: [],
+      detectedStatutes: [...annotated.statutes, ...statutes],
+      suggestedCases: annotated.caseRefs,
+      applicableRules: [],
+      keyTopics: [],
+      legalDates: [],
+      fromCache: false,
+      chunks,
+    };
+  }
 
   const reviewedContent = await retryWithLogging(
     'qualityReview:streamLegalPipeline',

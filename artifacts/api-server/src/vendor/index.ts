@@ -8,7 +8,6 @@ export * from './p-limit.js';
 export * from './circuit-breaker.js';
 export * from './pdf-parser.js';
 export * from './text-utils.js';
-
 export * from './legal-citation-parser.js';
 export * from './date-parser.js';
 export * from './keyword-extractor.js';
@@ -29,3 +28,5 @@ export * from './token-bucket.js';
 export * from './levenshtein.js';
 export * from './priority-queue.js';
 export * from './text-diff.js';
+export * from './statute-tagger.js';
+export * from './docx-parser.js';

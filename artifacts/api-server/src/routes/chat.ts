@@ -4,18 +4,68 @@ import { consultationsTable, messagesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { streamLegalPipeline, getProviderStatus, createStreamEventBus } from "../lib/aiPipeline";
 import { retryWithLogging } from "../vendor/retry-backoff.js";
+import { parsePDFBase64, cleanExtractedText } from "../vendor/pdf-parser.js";
+import { parseDOCXBase64 } from "../vendor/docx-parser.js";
 import { randomUUID } from "crypto";
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_EXTRACTED_CHARS = 8000;
+
+async function extractAttachmentText(attachment: { name: string; mimeType: string; base64: string }): Promise<string> {
+  try {
+    const byteLength = Math.ceil(attachment.base64.length * 0.75);
+    if (byteLength > MAX_ATTACHMENT_BYTES) {
+      return `[Document "${attachment.name}" is too large to process (max 10 MB)]`;
+    }
+
+    const lowerName = attachment.name.toLowerCase();
+    if (attachment.mimeType === 'application/pdf' || lowerName.endsWith('.pdf')) {
+      const result = await parsePDFBase64(attachment.base64);
+      const cleaned = cleanExtractedText(result.text);
+      const truncated = cleaned.length > MAX_EXTRACTED_CHARS
+        ? cleaned.slice(0, MAX_EXTRACTED_CHARS) + `\n\n[... truncated — document has ${result.wordCount} words across ${result.pages} pages]`
+        : cleaned;
+      return `Document: "${attachment.name}"\nPages: ${result.pages} | Words: ${result.wordCount}\n\n${truncated}`;
+    }
+
+    if (
+      attachment.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      lowerName.endsWith('.docx')
+    ) {
+      const result = await parseDOCXBase64(attachment.base64);
+      const cleaned = cleanExtractedText(result.text);
+      const truncated = cleaned.length > MAX_EXTRACTED_CHARS
+        ? cleaned.slice(0, MAX_EXTRACTED_CHARS) + `\n\n[... truncated — document has ${result.wordCount} words across ${result.paragraphs} paragraphs]`
+        : cleaned;
+      return `Document: "${attachment.name}"\nParagraphs: ${result.paragraphs} | Words: ${result.wordCount}\n\n${truncated}`;
+    }
+
+    return `[Unsupported document type: ${attachment.mimeType}]`;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `[Failed to extract text from "${attachment.name}": ${message}]`;
+  }
+}
 
 const router: IRouter = Router();
 
 router.post("/chat", async (req, res) => {
-  const { message, practiceArea = "all", consultationId, userId } = req.body;
+  const { message, practiceArea = "all", consultationId, userId, attachment } = req.body;
 
   if (!message || typeof message !== "string") {
     res.status(400).json({ error: "Bad Request", message: "message is required" });
     return;
   }
 
+  let documentContext = "";
+  if (attachment && typeof attachment === "object" && attachment.base64) {
+    try {
+      const extracted = await extractAttachmentText(attachment);
+      documentContext = `\n\n---\n**Attached Document Context:**\n\n${extracted}\n---`;
+    } catch {
+      documentContext = `\n\n[Document "${attachment.name ?? 'unknown'}" could not be processed]`;
+    }
+  }
   try {
     let activeConsultationId = consultationId;
 
@@ -57,10 +107,12 @@ router.post("/chat", async (req, res) => {
     const startTime = Date.now();
     const streamBus = createStreamEventBus();
 
+    const effectiveMessage = documentContext ? `${message}${documentContext}` : message;
+
     const result = await retryWithLogging(
       'streamLegalPipeline',
       () => streamLegalPipeline(
-        message,
+        effectiveMessage,
         practiceArea,
         conversationHistory,
         (chunk) => {

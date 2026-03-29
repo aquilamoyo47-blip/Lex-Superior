@@ -189,3 +189,26 @@ export async function parseDocxBase64(base64: string): Promise<DocxParseResult> 
 export function isDocxFile(filename: string): boolean {
   return /\.docx$/i.test(filename);
 }
+
+// Compatibility aliases for Task #9
+export type DOCXParseResult = { text: string; paragraphs: number; wordCount: number; characterCount: number };
+
+export async function parseDOCX(buffer: Buffer): Promise<DOCXParseResult> {
+  const result = await parseDocx(buffer);
+  return {
+    text: result.text,
+    paragraphs: result.paragraphs.length,
+    wordCount: result.wordCount,
+    characterCount: result.characterCount,
+  };
+}
+
+export async function parseDOCXBase64(base64: string): Promise<DOCXParseResult> {
+  const buf = Buffer.from(base64, 'base64');
+  return parseDOCX(buf);
+}
+
+export function isDOCXBuffer(buffer: Buffer): boolean {
+  return isDocxBuffer(buffer);
+}
+

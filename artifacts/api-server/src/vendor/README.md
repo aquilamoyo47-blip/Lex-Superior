@@ -17,8 +17,7 @@ These modules are copied locally to avoid external dependencies and network roun
 | `circuit-breaker.ts` | https://github.com/nicolo-ribaudo/opossum / cockatiel patterns | MIT | custom port |
 | `pdf-parser.ts` | https://github.com/mozilla/pdf.js text-extraction core | Apache-2.0 | minimal port |
 | `text-utils.ts` | https://github.com/component/words / various | MIT | custom |
-
-## New 20 AI-Enhancing Modules
+## New AI-Enhancing Modules
 
 | Module | Source | License | Purpose |
 |--------|--------|---------|---------|
@@ -42,3 +41,5 @@ These modules are copied locally to avoid external dependencies and network roun
 | `levenshtein.ts` | https://github.com/hiddentao/fast-levenshtein | MIT | Optimised edit-distance algorithm for approximate matching of statute names and case citations when users make typos. |
 | `priority-queue.ts` | https://github.com/qiao/heap.js | MIT | Binary min-heap priority queue to rank and merge results from BM25, TF-IDF, and fuzzy search into a single ordered hit list. |
 | `text-diff.ts` | https://github.com/kpdecker/jsdiff | BSD-3-Clause | Myers diff algorithm to compare document versions in the Vault and show what changed between uploaded revisions. |
+| `statute-tagger.ts` | https://github.com/smashew/NamedEntityTagger (patterns) + GLIN | MIT | custom port for Zimbabwean statutes |
+| `docx-parser.ts` | https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT (ZIP spec) + https://github.com/dolanmiu/docx (OOXML structure) | MIT | minimal vendored DOCX/ZIP parser |
