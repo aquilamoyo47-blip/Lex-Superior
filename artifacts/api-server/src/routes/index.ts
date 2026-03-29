@@ -6,6 +6,7 @@ import libraryRouter from "./library";
 import vaultRouter from "./vault";
 import documentsRouter from "./documents";
 import councilRouter from "./council";
+import webhooksRouter from "./webhooks";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(libraryRouter);
 router.use(vaultRouter);
 router.use(documentsRouter);
 router.use(councilRouter);
+router.use(webhooksRouter);
 
 export default router;

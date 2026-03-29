@@ -7,6 +7,50 @@ import { chunkText } from "../vendor/sentence-splitter.js";
 import { extractEntities } from "../vendor/nlp-entity.js";
 import { CircuitBreaker, CircuitOpenError } from "../vendor/circuit-breaker.js";
 
+const DIFY_API_BASE_URL = process.env.DIFY_API_BASE_URL || 'https://api.dify.ai/v1';
+const DIFY_API_KEY = process.env.DIFY_API_KEY || '';
+const DIFY_MODEL = process.env.DIFY_MODEL || 'gpt-4o';
+
+async function callDifyChat(
+  query: string,
+  conversationId?: string
+): Promise<{ content: string; conversationId: string }> {
+  const response = await fetch(`${DIFY_API_BASE_URL}/chat-messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${DIFY_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      inputs: {},
+      query,
+      response_mode: 'blocking',
+      conversation_id: conversationId || '',
+      user: 'lex-superior-api',
+      model: DIFY_MODEL,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Dify API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json() as {
+    answer: string;
+    conversation_id: string;
+  };
+
+  return {
+    content: data.answer,
+    conversationId: data.conversation_id,
+  };
+}
+
+export function isDifyAvailable(): boolean {
+  return Boolean(DIFY_API_KEY);
+}
+
 const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civil law. Review the following legal response and FLAG ONLY (do not rewrite):
 - Suspicious case citations → add [VERIFY: citation] after them
 - Wrong statute sections → add [VERIFY: section] after them
@@ -547,6 +591,44 @@ export async function streamLegalPipeline(
   return pipelineResult;
 }
 
+export async function runDifyPipeline(
+  query: string,
+  practiceArea: string,
+  conversationId?: string
+): Promise<PipelineResult & { difyConversationId?: string }> {
+  if (!isDifyAvailable()) {
+    throw new Error('Dify AI provider is not configured. Set DIFY_API_KEY environment variable.');
+  }
+
+  const { processedQuery, chunks } = preprocessQuery(query);
+  const fullQuery = `Practice Area: ${practiceArea}\n\n${SYSTEM_PROMPT}\n\n${processedQuery}`;
+
+  logger.info({ practiceArea, conversationId }, 'Running Dify AI pipeline');
+
+  const { content: rawContent, conversationId: difyConversationId } = await callDifyChat(fullQuery, conversationId);
+  const content = await qualityReview(rawContent);
+
+  const plainText = markdownToPlainText(content);
+  const flags = extractVerifyFlags(content);
+  const detectedStatutes = extractDetectedStatutes(content);
+  const suggestedCases = extractSuggestedCases(content);
+  const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const tokenCount = countTokens(plainText);
+
+  return {
+    content,
+    providerUsed: `Dify AI (${DIFY_MODEL})`,
+    flags,
+    detectedStatutes,
+    suggestedCases,
+    applicableRules,
+    fromCache: false,
+    tokenCount,
+    chunks,
+    difyConversationId,
+  };
+}
+
 export function getProviderStatus(): Array<{
   name: string;
   available: boolean;
@@ -578,6 +660,17 @@ export function getProviderStatus(): Array<{
       dailyLimit: 99999,
       rateLimited: false,
       circuitState: "N/A",
+    });
+  }
+
+  if (!statuses.find((s) => s.name.startsWith("Dify"))) {
+    statuses.push({
+      name: `Dify AI (${DIFY_MODEL})`,
+      available: isDifyAvailable(),
+      dailyUsage: 0,
+      dailyLimit: 999999,
+      rateLimited: false,
+      circuitState: isDifyAvailable() ? "CLOSED" : "N/A",
     });
   }
 
