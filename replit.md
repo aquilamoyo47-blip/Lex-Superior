@@ -1,4 +1,4 @@
-# Lex Superior - Zimbabwe Civil Law AI Legal Advocate
+# Lex Superior AI - Zimbabwe Civil Law AI Legal Advocate
 
 ## Overview
 

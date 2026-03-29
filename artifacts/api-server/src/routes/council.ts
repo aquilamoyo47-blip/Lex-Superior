@@ -91,37 +91,59 @@ This output constitutes legal research assistance only and not formal legal advi
     name: "Case Law Analyst",
     title: "Zimbabwean Case Law",
     specialty: "case_law",
-    description: "Deep expertise in Zimbabwe Superior Court judgments — case summaries, ratio decidendi, distinguishing facts, and tracing how principles have evolved.",
+    description: "Deep expertise in Zimbabwe Superior Court judgments — case summaries, ratio decidendi, distinguishing facts, citation chains, and tracing how principles evolved across the ZimLII database.",
     model: "gpt-5.2",
     icon: "BookOpen",
     color: "purple",
-    systemPrompt: `You are Lex Superior AI — Case Law Analyst, a specialist in Zimbabwean civil case law and Superior Court judgments.
+    systemPrompt: `You are Lex Superior AI — Case Law Analyst, a specialist in Zimbabwean civil case law and Superior Court judgments, powered by the ZimLII Zimbabwe Legal Information Institute research pipeline.
 
-SPECIALISATION: Analyse, summarise, and apply Zimbabwean civil case law with precision.
+SPECIALISATION: Perform multi-step deep-dive analysis of Zimbabwean civil case law with academic precision, following the Research Pipeline workflow below.
 
 Your expertise covers:
-- Supreme Court of Zimbabwe civil judgments
-- High Court of Zimbabwe civil judgments
-- Constitutional Court civil matters
-- Seminal Zimbabwean civil cases: Kuvarega v Registrar General 1998 (1) ZLR 188; Makamure v Chingwaru; Zimco Properties v Harare CC; and all major civil precedents
+- Supreme Court of Zimbabwe civil judgments (ZWSC)
+- High Court of Zimbabwe civil judgments (ZWHHC, ZWBHC, ZWMHC, ZWGHC)
+- Constitutional Court civil matters (ZWCC)
+- Zimbabwe Law Reports (ZLR) as primary authority
+- Seminal cases: Kuvarega v Registrar General 1998 (1) ZLR 188; Telecel Zimbabwe (Pvt) Ltd v POTRAZ 2015 (2) ZLR 219; Blue Ranges Estates (Pvt) Ltd v Mudavanhu 2014 (1) ZLR 345; Zimco Properties v Harare CC; Makamure v Chingwaru; and all major civil precedents
 - South African and English authorities as persuasive precedents
-- Tracing how legal principles develop across cases
+- Tracing how legal principles develop across cases over time
 
-ANALYSIS FORMAT — for every case cited or requested:
-1. **Citation**: Full citation including year, law report, page number
-2. **Court**: Which court decided it and when
-3. **Facts**: Brief, precise factual summary
-4. **Issue**: The precise legal question decided
-5. **Ratio Decidendi**: The binding legal principle (clearly distinguished from obiter)
-6. **Obiter Dicta**: Any significant non-binding observations
-7. **Application**: How this case applies to the user's facts
-8. **Distinguishing factors**: Circumstances where this case would NOT apply
+RESEARCH PIPELINE — for every Case Deep Dive request, follow all 8 steps:
 
-RULES:
-- Never fabricate a case — if uncertain, say "[VERIFY: this citation — please confirm with law reports]"
-- Always flag if a case has been overruled or distinguished by later authority
-- Zimbabwean courts first; South African/English cases as persuasive only
-- Flag ZLR (Zimbabwe Law Reports) as primary; SACR, SALJ as secondary
+**STEP 1 — CASE IDENTIFICATION**
+Full citation: [Case Name] [Year] ([Volume]) ZLR [Page] (court code)
+ZimLII link: https://zimlii.org/search/?q=[case+name+encoded]
+If citation uncertain: [VERIFY: citation — confirm against ZLR volumes or ZimLII]
+
+**STEP 2 — COURT & BENCH**
+Court, date decided, presiding judge(s), whether reported or unreported
+
+**STEP 3 — FACTS**
+Precise factual matrix — parties, cause of action, lower court history
+
+**STEP 4 — LEGAL ISSUE(S)**
+The exact question(s) of civil law decided
+
+**STEP 5 — RATIO DECIDENDI**
+The binding legal principle only — clearly separated from obiter
+
+**STEP 6 — OBITER DICTA**
+Any significant non-binding judicial observations worth noting
+
+**STEP 7 — CITATION CHAIN (downstream/upstream)**
+Cases CITED BY this case (what authorities it relied on) and
+Cases that HAVE CITED THIS CASE in later proceedings (its downstream impact)
+Flag each with [VERIFY] if not confirmed
+
+**STEP 8 — APPLICATION & DISTINGUISHING**
+How to apply this case to current facts, and when it would be distinguished
+
+GENERAL CHAT RULES:
+- Never fabricate a case — if uncertain: [VERIFY: citation — please confirm with ZLR volumes or ZimLII]
+- Always flag if a case has been overruled, distinguished, or limited by later authority
+- Zimbabwean courts bind; South African/English authorities are persuasive only
+- When asked to "trace the development" of a principle, produce a chronological case timeline
+- For each case in a timeline, give a one-line ratio and its ZimLII search link
 
 This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner.`
   },
@@ -266,6 +288,159 @@ function extractSuggestedCases(content: string): string[] {
   const matches = content.match(casePattern) || [];
   return [...new Set(matches)].slice(0, 8);
 }
+
+// ─── ZimLII search URL builder ─────────────────────────────────────────────
+function buildZimLIISearchUrl(query: string): string {
+  return `https://zimlii.org/search/?q=${encodeURIComponent(query)}`;
+}
+
+// ─── Case Deep Dive endpoint ────────────────────────────────────────────────
+router.post("/council/case-deep-dive", async (req: Request, res: Response) => {
+  const { query, userId } = req.body;
+
+  if (!query || typeof query !== "string" || query.trim().length < 3) {
+    res.status(400).json({ error: "Bad Request", message: "query must be at least 3 characters" });
+    return;
+  }
+
+  const trimmedQuery = query.trim();
+
+  try {
+    // ── Step 1: Search local database ──────────────────────────────────────
+    const searchTerm = `%${trimmedQuery.toLowerCase()}%`;
+    const dbCases = await db
+      .select()
+      .from(casesTable)
+      .where(
+        or(
+          ilike(casesTable.citation, searchTerm),
+          ilike(casesTable.title, searchTerm),
+          ilike(casesTable.principle, searchTerm),
+          ilike(casesTable.headnote, searchTerm),
+          sql`EXISTS (SELECT 1 FROM unnest(${casesTable.subjectTags}) tag WHERE lower(tag) LIKE ${searchTerm})`
+        )
+      )
+      .limit(5);
+
+    const dbStatutes = await db
+      .select()
+      .from(statutesTable)
+      .where(
+        or(
+          ilike(statutesTable.title, searchTerm),
+          ilike(statutesTable.summary, searchTerm),
+          sql`EXISTS (SELECT 1 FROM unnest(${statutesTable.tags}) tag WHERE lower(tag) LIKE ${searchTerm})`
+        )
+      )
+      .limit(3);
+
+    // ── Step 2: Build context-enriched deep dive prompt ────────────────────
+    const dbContext = dbCases.length > 0
+      ? `\n\nFOUND IN LOCAL DATABASE:\n${dbCases.map(c =>
+          `- ${c.citation} | ${c.court} | ${c.year ?? "year unknown"}\n  Title: ${c.title}\n  Principle: ${c.principle ?? "N/A"}\n  Headnote: ${c.headnote?.slice(0, 200) ?? "N/A"}`
+        ).join("\n\n")}`
+      : "\n\nNOT FOUND IN LOCAL DATABASE — rely on your training knowledge and flag uncertain citations with [VERIFY].";
+
+    const statuteContext = dbStatutes.length > 0
+      ? `\n\nRELATED STATUTES IN DATABASE:\n${dbStatutes.map(s =>
+          `- ${s.title} (${s.chapter ?? "Chapter unknown"}) — ${s.summary?.slice(0, 120) ?? "N/A"}`
+        ).join("\n")}`
+      : "";
+
+    const zimliiUrl = buildZimLIISearchUrl(trimmedQuery);
+
+    const deepDivePrompt = `CASE DEEP DIVE REQUEST: "${trimmedQuery}"
+
+ZimLII Research Link: ${zimliiUrl}
+${dbContext}${statuteContext}
+
+Please perform the complete 8-step Research Pipeline analysis for this case. Structure your response with clear headings for each step. For the Citation Chain step (Step 7), identify at least 3 upstream authorities this case relied on and, where possible, 2-3 downstream cases that have subsequently applied or distinguished it. Flag every uncertain citation with [VERIFY: citation]. Include the ZimLII search link above in Step 1.`;
+
+    // ── Step 3: SSE stream the analysis ────────────────────────────────────
+    const member = COUNCIL_MEMBERS.find(m => m.id === "case-law-analyst")!;
+
+    // Create a consultation record
+    const [consultation] = await db.insert(consultationsTable).values({
+      userId: userId || "anonymous",
+      title: `[Deep Dive] ${trimmedQuery.slice(0, 60)}`,
+      practiceArea: "case_law",
+    }).returning();
+
+    await db.insert(messagesTable).values({
+      consultationId: consultation.id,
+      role: "user",
+      content: deepDivePrompt,
+    });
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Consultation-Id", consultation.id);
+    res.flushHeaders();
+
+    // Send structured metadata immediately so the UI can render links/DB hits
+    res.write(`data: ${JSON.stringify({
+      meta: {
+        query: trimmedQuery,
+        zimliiUrl,
+        dbHits: dbCases.length,
+        dbCases: dbCases.map(c => ({ citation: c.citation, title: c.title, court: c.court, year: c.year })),
+        dbStatutes: dbStatutes.map(s => ({ title: s.title, chapter: s.chapter })),
+      }
+    })}\n\n`);
+
+    const stream = await openai.chat.completions.create({
+      model: member.model,
+      max_completion_tokens: 8192,
+      messages: [
+        { role: "system", content: member.systemPrompt },
+        { role: "user", content: deepDivePrompt },
+      ],
+      stream: true,
+    });
+
+    let fullResponse = "";
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    const flags = extractVerifyFlags(fullResponse);
+    const detectedStatutes = extractDetectedStatutes(fullResponse);
+    const suggestedCases = extractSuggestedCases(fullResponse);
+
+    await db.insert(messagesTable).values({
+      consultationId: consultation.id,
+      role: "assistant",
+      content: fullResponse,
+      providerUsed: "Lex Superior AI (Case Law Analyst — Deep Dive)",
+      fromCache: false,
+      flags,
+    });
+
+    res.write(`data: ${JSON.stringify({
+      done: true,
+      flags,
+      detectedStatutes,
+      suggestedCases,
+      consultationId: consultation.id,
+      zimliiUrl,
+    })}\n\n`);
+    res.end();
+
+  } catch (err) {
+    req.log?.error?.({ err }, "Case deep dive error");
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal Server Error", message: (err as Error).message });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+      res.end();
+    }
+  }
+});
 
 router.get("/council/members", (_req, res) => {
   res.json(COUNCIL_MEMBERS.map(m => ({

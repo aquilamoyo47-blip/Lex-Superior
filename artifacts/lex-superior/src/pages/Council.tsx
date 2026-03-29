@@ -8,11 +8,20 @@ import { Separator } from "@/components/ui/separator";
 import {
   Scale, FileText, BookOpen, ClipboardList, Landmark,
   Send, Copy, Download, Bookmark, AlertTriangle, User,
-  Brain, PlusCircle, ChevronLeft, Sparkles, Loader2
+  Brain, PlusCircle, ChevronLeft, Sparkles, Loader2,
+  Search, ExternalLink, Database, GitFork, X
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+interface DeepDiveMeta {
+  query: string;
+  zimliiUrl: string;
+  dbHits: number;
+  dbCases: Array<{ citation: string; title: string; court: string; year: number | null }>;
+  dbStatutes: Array<{ title: string; chapter: string | null }>;
+}
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Scale, FileText, BookOpen, ClipboardList, Landmark,
@@ -111,6 +120,11 @@ export default function Council() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Case Deep Dive state (Case Law Analyst only)
+  const [deepDiveMode, setDeepDiveMode] = useState(false);
+  const [deepDiveInput, setDeepDiveInput] = useState("");
+  const [deepDiveMeta, setDeepDiveMeta] = useState<DeepDiveMeta | null>(null);
+
   useEffect(() => {
     fetch("/api/council/members")
       .then(r => r.json())
@@ -131,7 +145,108 @@ export default function Council() {
     setDetectedStatutes([]);
     setSuggestedCases([]);
     setInput("");
+    setDeepDiveMode(false);
+    setDeepDiveInput("");
+    setDeepDiveMeta(null);
   }, []);
+
+  // ── Case Deep Dive handler ────────────────────────────────────────────────
+  const handleDeepDive = useCallback(async () => {
+    if (!deepDiveInput.trim() || isStreaming) return;
+
+    const query = deepDiveInput.trim();
+    setDeepDiveInput("");
+    setIsStreaming(true);
+    setDeepDiveMeta(null);
+
+    // Add user message showing the deep dive query
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: `🔍 **Case Deep Dive:** ${query}`,
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    const assistantId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      streaming: true,
+      memberId: "case-law-analyst",
+    }]);
+
+    abortRef.current = new AbortController();
+
+    try {
+      const response = await fetch("/api/council/case-deep-dive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          userId: localStorage.getItem("userId") || "anonymous",
+        }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const newConsultationId = response.headers.get("x-consultation-id");
+      if (newConsultationId) setConsultationId(newConsultationId);
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.meta) {
+              setDeepDiveMeta(data.meta);
+            }
+            if (data.content) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + data.content }
+                  : m
+              ));
+            }
+            if (data.done) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, streaming: false, flags: data.flags || [], detectedStatutes: data.detectedStatutes || [], suggestedCases: data.suggestedCases || [] }
+                  : m
+              ));
+              if (data.detectedStatutes?.length) setDetectedStatutes(data.detectedStatutes);
+              if (data.suggestedCases?.length) setSuggestedCases(data.suggestedCases);
+              if (data.consultationId) setConsultationId(data.consultationId);
+            }
+            if (data.error) throw new Error(data.error);
+          } catch { /* skip malformed chunks */ }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId
+          ? { ...m, content: "Deep dive failed. Please try again.", streaming: false }
+          : m
+      ));
+      toast.error("Deep dive error. Please try again.");
+    } finally {
+      setIsStreaming(false);
+    }
+  }, [deepDiveInput, isStreaming]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || !selectedMember || isStreaming) return;
@@ -319,43 +434,107 @@ export default function Council() {
                 <p className="text-xs text-muted-foreground leading-relaxed">{selectedMember.description}</p>
               </div>
 
-              <div className="p-4 border-b border-white/5">
+              <div className="p-4 border-b border-white/5 space-y-2">
                 <Button
-                  onClick={() => { setMessages([]); setConsultationId(null); setDetectedStatutes([]); setSuggestedCases([]); }}
+                  onClick={() => { setMessages([]); setConsultationId(null); setDetectedStatutes([]); setSuggestedCases([]); setDeepDiveMeta(null); setDeepDiveMode(false); }}
                   className="w-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-semibold"
                 >
                   <PlusCircle className="w-4 h-4 mr-2" /> New Consultation
                 </Button>
+                {selectedMember?.id === "case-law-analyst" && (
+                  <Button
+                    onClick={() => { setDeepDiveMode(d => !d); setDeepDiveInput(""); }}
+                    className={cn(
+                      "w-full font-semibold border transition-all",
+                      deepDiveMode
+                        ? "bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-500/30"
+                        : "bg-white/5 hover:bg-white/10 text-muted-foreground border-white/10"
+                    )}
+                  >
+                    <GitFork className="w-4 h-4 mr-2" />
+                    {deepDiveMode ? "Exit Deep Dive" : "Case Deep Dive"}
+                  </Button>
+                )}
               </div>
 
-              {(detectedStatutes.length > 0 || suggestedCases.length > 0) && (
-                <ScrollArea className="flex-1 p-4">
-                  {detectedStatutes.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Detected Statutes</h4>
-                      <div className="space-y-2">
-                        {detectedStatutes.map((s, i) => (
-                          <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80">
-                            {s}
+              <ScrollArea className="flex-1 p-4">
+                {/* Deep Dive Meta Panel */}
+                {deepDiveMeta && (
+                  <div className="mb-6">
+                    <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <GitFork className="w-3 h-3" /> ZimLII Research
+                    </h4>
+
+                    {/* ZimLII Link */}
+                    <a
+                      href={deepDiveMeta.zimliiUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-xs p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-colors mb-3 group"
+                    >
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                      <span className="flex-1 truncate">Search ZimLII for "{deepDiveMeta.query.slice(0, 30)}"</span>
+                    </a>
+
+                    {/* DB Hits */}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                      <Database className="w-3 h-3" />
+                      <span>{deepDiveMeta.dbHits > 0 ? `${deepDiveMeta.dbHits} match${deepDiveMeta.dbHits > 1 ? "es" : ""} in local database` : "Not in local database"}</span>
+                    </div>
+
+                    {deepDiveMeta.dbCases.length > 0 && (
+                      <div className="space-y-1.5 mb-3">
+                        {deepDiveMeta.dbCases.map((c, i) => (
+                          <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5">
+                            <p className="text-foreground/90 font-medium">{c.citation}</p>
+                            <p className="text-muted-foreground mt-0.5">{c.court} · {c.year ?? "year unknown"}</p>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
-                  {suggestedCases.length > 0 && (
-                    <div>
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Cited Cases</h4>
-                      <div className="space-y-2">
-                        {suggestedCases.map((c, i) => (
-                          <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80 italic">
-                            {c}
-                          </div>
-                        ))}
+                    )}
+
+                    {deepDiveMeta.dbStatutes.length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">Related Statutes</p>
+                        <div className="space-y-1">
+                          {deepDiveMeta.dbStatutes.map((s, i) => (
+                            <div key={i} className="text-xs p-2 rounded bg-white/3 border border-white/5 text-foreground/70">
+                              {s.title} {s.chapter ? `(${s.chapter})` : ""}
+                            </div>
+                          ))}
+                        </div>
                       </div>
+                    )}
+
+                    <Separator className="my-3 opacity-20" />
+                  </div>
+                )}
+
+                {detectedStatutes.length > 0 && (
+                  <div className="mb-6">
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Detected Statutes</h4>
+                    <div className="space-y-2">
+                      {detectedStatutes.map((s, i) => (
+                        <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80">
+                          {s}
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </ScrollArea>
-              )}
+                  </div>
+                )}
+                {suggestedCases.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Cited Cases</h4>
+                    <div className="space-y-2">
+                      {suggestedCases.map((c, i) => (
+                        <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80 italic">
+                          {c}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </ScrollArea>
             </aside>
 
             {/* Centre: Chat */}
@@ -373,6 +552,43 @@ export default function Council() {
                   <p className="text-xs text-muted-foreground">{selectedMember.title}</p>
                 </div>
               </div>
+
+              {/* Deep Dive Search Bar */}
+              {deepDiveMode && selectedMember?.id === "case-law-analyst" && (
+                <div className="border-b border-purple-500/20 bg-purple-500/5 px-4 py-3">
+                  <div className="max-w-3xl mx-auto">
+                    <div className="flex items-center gap-2 mb-2">
+                      <GitFork className="w-4 h-4 text-purple-400" />
+                      <span className="text-sm font-semibold text-purple-300">Case Deep Dive</span>
+                      <Badge className="bg-purple-500/20 text-purple-300 border-0 text-[10px] ml-1">ZimLII Pipeline</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Enter a case name or citation for an 8-step research analysis: identification → facts → ratio → obiter → citation chain → application.
+                    </p>
+                    <div className="relative flex gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={deepDiveInput}
+                          onChange={e => setDeepDiveInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") handleDeepDive(); }}
+                          placeholder="e.g. Kuvarega v Registrar General or 1998 (1) ZLR 188..."
+                          disabled={isStreaming}
+                          className="w-full bg-card/80 border border-purple-500/30 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-400/60 focus:ring-1 focus:ring-purple-400/30 disabled:opacity-60"
+                        />
+                      </div>
+                      <Button
+                        onClick={handleDeepDive}
+                        disabled={!deepDiveInput.trim() || isStreaming}
+                        className="bg-purple-600 hover:bg-purple-500 text-white rounded-xl px-4 shrink-0"
+                      >
+                        {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <ScrollArea className="flex-1 p-4 sm:p-6 lg:p-8" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-8 pb-40">
@@ -505,9 +721,10 @@ function getSamplePrompts(memberId: string): string[] {
       "Draft a Certificate of Urgency for a chamber application",
     ],
     "case-law-analyst": [
-      "Summarise Kuvarega v Registrar General 1998 (1) ZLR 188",
+      "Deep dive: Kuvarega v Registrar General",
       "What cases govern the test for urgency in Zimbabwe?",
       "Trace the development of the estoppel principle in Zimbabwe courts",
+      "Deep dive: Telecel Zimbabwe v POTRAZ",
     ],
     "procedure-guide": [
       "Walk me through the default judgment procedure step by step",
