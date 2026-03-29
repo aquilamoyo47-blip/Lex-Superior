@@ -5,6 +5,7 @@ import { countTokens, truncateToTokenLimit } from "../vendor/token-counter.js";
 import { markdownToPlainText } from "../vendor/markdown-parser.js";
 import { chunkText } from "../vendor/sentence-splitter.js";
 import { extractEntities } from "../vendor/nlp-entity.js";
+import { CircuitBreaker, CircuitOpenError } from "../vendor/circuit-breaker.js";
 
 const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civil law. Review the following legal response and FLAG ONLY (do not rewrite):
 - Suspicious case citations → add [VERIFY: citation] after them
@@ -55,20 +56,279 @@ NEVER:
 - Fabricate case citations
 - Omit [VERIFY] tags on uncertain authorities`;
 
+const PARALLEL_CONCURRENCY = 3;
+
+type ProviderMessages = Array<{ role: "system" | "user" | "assistant"; content: string }>;
+
+interface ProviderConfig {
+  name: string;
+  priority: number;
+  dailyLimit: number;
+  callFn: (messages: ProviderMessages) => Promise<string>;
+  streamFn: (messages: ProviderMessages, onChunk: (chunk: string) => void) => Promise<string>;
+}
+
+interface ProviderState {
+  config: ProviderConfig;
+  circuit: CircuitBreaker;
+  dailyUsage: number;
+  dailyErrors: number;
+  lastResetDate: string;
+}
+
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getOrResetUsage(state: ProviderState): void {
+  const today = todayDate();
+  if (state.lastResetDate !== today) {
+    state.dailyUsage = 0;
+    state.dailyErrors = 0;
+    state.lastResetDate = today;
+  }
+}
+
+function isProviderAvailable(state: ProviderState): boolean {
+  getOrResetUsage(state);
+  if (state.circuit.isOpen) return false;
+  if (state.dailyUsage >= state.config.dailyLimit) return false;
+  return true;
+}
+
+function makeCircuitBreaker(name: string): CircuitBreaker {
+  return new CircuitBreaker(name, {
+    failureThreshold: 5,
+    successThreshold: 2,
+    timeout: 90000,
+    resetTimeout: 60000,
+    onOpen: (n) => logger.warn({ provider: n }, "Circuit breaker OPEN for provider"),
+    onClose: (n) => logger.info({ provider: n }, "Circuit breaker CLOSED for provider"),
+    onHalfOpen: (n) => logger.info({ provider: n }, "Circuit breaker HALF_OPEN for provider"),
+  });
+}
+
+const replitProvider: ProviderConfig = {
+  name: "Replit AI (gpt-5.2)",
+  priority: 1,
+  dailyLimit: 999999,
+  callFn: async (messages) => {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.2",
+      max_completion_tokens: 8192,
+      messages,
+      stream: false,
+    });
+    return response.choices[0]?.message?.content || "";
+  },
+  streamFn: async (messages, onChunk) => {
+    const stream = await openai.chat.completions.create({
+      model: "gpt-5.2",
+      max_completion_tokens: 8192,
+      messages,
+      stream: true,
+    });
+    let fullContent = "";
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        fullContent += delta;
+        onChunk(delta);
+      }
+    }
+    return fullContent;
+  },
+};
+
+function buildCozeProvider(): ProviderConfig | null {
+  const token = process.env.COZE_API_TOKEN;
+  const botId = process.env.COZE_BOT_ID;
+  if (!token || !botId) return null;
+
+  const COZE_API_URL = "https://api.coze.com/open_api/v2/chat";
+
+  async function callCozeRaw(messages: ProviderMessages): Promise<string> {
+    const cozeHistory = messages
+      .filter((m) => m.role !== "system")
+      .slice(0, -1)
+      .map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+        content_type: "text",
+      }));
+
+    const lastUser = messages.filter((m) => m.role === "user").at(-1);
+    const query = lastUser?.content || "";
+
+    const response = await fetch(COZE_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ bot_id: botId, user: "lex-superior-user", query, chat_history: cozeHistory, stream: false }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Coze API returned ${response.status}: ${text}`);
+    }
+
+    const data = (await response.json()) as {
+      code: number;
+      msg: string;
+      messages?: Array<{ role: string; type: string; content: string; content_type: string }>;
+    };
+
+    if (data.code !== 0) {
+      throw new Error(`Coze API error (code ${data.code}): ${data.msg}`);
+    }
+
+    const answer = data.messages?.find((m) => m.role === "assistant" && m.type === "answer");
+    const content = answer?.content || "";
+    if (!content) throw new Error("Coze API returned an empty response.");
+    return content;
+  }
+
+  return {
+    name: "Coze",
+    priority: 2,
+    dailyLimit: 99999,
+    callFn: callCozeRaw,
+    streamFn: async (messages, onChunk) => {
+      const content = await callCozeRaw(messages);
+      onChunk(content);
+      return content;
+    },
+  };
+}
+
+function buildProviderStates(): Map<string, ProviderState> {
+  const configs: ProviderConfig[] = [replitProvider];
+  const coze = buildCozeProvider();
+  if (coze) configs.push(coze);
+
+  return new Map(
+    configs.map((cfg) => [
+      cfg.name,
+      { config: cfg, circuit: makeCircuitBreaker(cfg.name), dailyUsage: 0, dailyErrors: 0, lastResetDate: todayDate() },
+    ])
+  );
+}
+
+const providerStates: Map<string, ProviderState> = buildProviderStates();
+
+function getAvailableProviders(): ProviderState[] {
+  return [...providerStates.values()]
+    .filter(isProviderAvailable)
+    .sort((a, b) => a.config.priority - b.config.priority);
+}
+
+interface ProviderCallResult {
+  content: string;
+  providerName: string;
+}
+
+async function dispatchParallel(
+  available: ProviderState[],
+  callFn: (state: ProviderState) => Promise<string>
+): Promise<ProviderCallResult> {
+  const raced = available.slice(0, PARALLEL_CONCURRENCY);
+
+  if (raced.length === 0) {
+    throw new Error("No AI providers available");
+  }
+
+  const promises = raced.map((state) =>
+    (async (): Promise<ProviderCallResult> => {
+      getOrResetUsage(state);
+      state.dailyUsage++;
+      try {
+        const content = await state.circuit.execute(() => callFn(state));
+        return { content, providerName: state.config.name };
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          state.dailyErrors++;
+        }
+        throw err;
+      }
+    })()
+  );
+
+  try {
+    const winner = await Promise.any(promises);
+    logger.info({ provider: winner.providerName, total: raced.length }, "Parallel dispatch: provider won");
+    return winner;
+  } catch {
+    logger.error({ providers: raced.map((s) => s.config.name) }, "All parallel providers failed");
+    throw new Error("All AI providers failed to respond");
+  }
+}
+
+async function dispatchParallelStream(
+  available: ProviderState[],
+  messages: ProviderMessages,
+  onChunk: (chunk: string) => void
+): Promise<ProviderCallResult> {
+  const raced = available.slice(0, PARALLEL_CONCURRENCY);
+
+  if (raced.length === 0) {
+    throw new Error("No AI providers available");
+  }
+
+  let winnerName: string | null = null;
+
+  const makeGatedChunkHandler = (providerName: string) => (chunk: string) => {
+    if (winnerName === null) {
+      winnerName = providerName;
+    }
+    if (winnerName === providerName) {
+      onChunk(chunk);
+    }
+  };
+
+  const promises = raced.map((state) =>
+    (async (): Promise<ProviderCallResult> => {
+      const gatedChunk = makeGatedChunkHandler(state.config.name);
+      getOrResetUsage(state);
+      state.dailyUsage++;
+      try {
+        const content = await state.circuit.execute(() => state.config.streamFn(messages, gatedChunk));
+        return { content, providerName: state.config.name };
+      } catch (err) {
+        if (!(err instanceof CircuitOpenError)) {
+          state.dailyErrors++;
+        }
+        throw err;
+      }
+    })()
+  );
+
+  try {
+    const winner = await Promise.any(promises);
+    logger.info({ provider: winner.providerName, total: raced.length }, "Parallel stream dispatch: provider won");
+    return winner;
+  } catch {
+    logger.error({ providers: raced.map((s) => s.config.name) }, "All parallel stream providers failed");
+    throw new Error("All AI providers failed to respond");
+  }
+}
+
 async function qualityReview(content: string): Promise<string> {
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-5.2',
+      model: "gpt-5.2",
       max_completion_tokens: 8192,
       messages: [
-        { role: 'system', content: QUALITY_REVIEW_PROMPT },
-        { role: 'user', content: `Review this legal response:\n\n${content}` }
+        { role: "system", content: QUALITY_REVIEW_PROMPT },
+        { role: "user", content: `Review this legal response:\n\n${content}` },
       ],
       stream: false,
     });
     return response.choices[0]?.message?.content || content;
   } catch (err) {
-    logger.warn({ err }, 'Quality review failed, using original content');
+    logger.warn({ err }, "Quality review failed, using original content");
     return content;
   }
 }
@@ -115,6 +375,7 @@ export function extractSuggestedCases(content: string): string[] {
 
 export interface PipelineResult {
   content: string;
+  thinkingChain?: string;
   providerUsed: string;
   flags: Array<{ type: string; text: string }>;
   detectedStatutes: string[];
@@ -135,8 +396,20 @@ function getCacheKey(query: string, practiceArea: string): string {
 }
 
 function isGeneralQuery(query: string): boolean {
-  const generalKeywords = ['requirements', 'procedure', 'rule', 'section', 'how to', 'what is', 'define', 'explain', 'elements', 'test', 'principle'];
-  return generalKeywords.some(k => query.toLowerCase().includes(k));
+  const generalKeywords = [
+    "requirements",
+    "procedure",
+    "rule",
+    "section",
+    "how to",
+    "what is",
+    "define",
+    "explain",
+    "elements",
+    "test",
+    "principle",
+  ];
+  return generalKeywords.some((k) => query.toLowerCase().includes(k));
 }
 
 function preprocessQuery(query: string): { processedQuery: string; chunks: number } {
@@ -144,8 +417,8 @@ function preprocessQuery(query: string): { processedQuery: string; chunks: numbe
   if (inputTokens > 2000) {
     const textChunks = chunkText(query, 1500, 200);
     const chunks = textChunks.length;
-    const processedQuery = textChunks.map(c => c.text).join('\n\n---\n\n');
-    logger.info({ chunks, inputTokens }, 'Long query chunked for processing');
+    const processedQuery = textChunks.map((c) => c.text).join("\n\n---\n\n");
+    logger.info({ chunks, inputTokens }, "Long query chunked for processing");
     return { processedQuery, chunks };
   }
   return { processedQuery: truncateToTokenLimit(query, 2000), chunks: 1 };
@@ -164,35 +437,36 @@ export async function runLegalPipeline(
 
   const { processedQuery, chunks } = preprocessQuery(query);
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...conversationHistory.slice(-6).map(m => ({
+  const messages: ProviderMessages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${processedQuery}` }
+    { role: "user", content: `Practice Area: ${practiceArea}\n\n${processedQuery}` },
   ];
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-5.2',
-    max_completion_tokens: 8192,
-    messages,
-    stream: false,
-  });
+  const available = getAvailableProviders();
+  logger.info({ count: available.length, concurrency: PARALLEL_CONCURRENCY }, "Dispatching to providers in parallel");
 
-  const rawContent = response.choices[0]?.message?.content || '';
+  const { content: rawContent, providerName } = await dispatchParallel(available, (state) =>
+    state.config.callFn(messages)
+  );
+
   const content = await qualityReview(rawContent);
 
   const plainText = markdownToPlainText(content);
   const flags = extractVerifyFlags(content);
   const detectedStatutes = extractDetectedStatutes(content);
   const suggestedCases = extractSuggestedCases(content);
-  const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const applicableRules = detectedStatutes.filter(
+    (s) => s.toLowerCase().includes("rule") || s.toLowerCase().includes("SI")
+  );
   const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
     content,
-    providerUsed: 'Replit AI (gpt-5.2)',
+    providerUsed: providerName,
     flags,
     detectedStatutes,
     suggestedCases,
@@ -223,49 +497,41 @@ export async function streamLegalPipeline(
 
   const { processedQuery, chunks } = preprocessQuery(query);
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...conversationHistory.slice(-6).map(m => ({
+  const messages: ProviderMessages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${processedQuery}` }
+    { role: "user", content: `Practice Area: ${practiceArea}\n\n${processedQuery}` },
   ];
 
-  logger.info({ practiceArea }, 'Streaming legal pipeline with Replit AI (gpt-5.2)');
+  const available = getAvailableProviders();
+  logger.info(
+    { count: available.length, concurrency: PARALLEL_CONCURRENCY },
+    "Streaming: dispatching to providers in parallel"
+  );
 
-  const stream = await openai.chat.completions.create({
-    model: 'gpt-5.2',
-    max_completion_tokens: 8192,
-    messages,
-    stream: true,
-  });
-
-  let fullContent = '';
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content;
-    if (delta) {
-      fullContent += delta;
-      onChunk(delta);
-    }
-  }
+  const { content: fullContent, providerName } = await dispatchParallelStream(available, messages, onChunk);
 
   const reviewedContent = await qualityReview(fullContent);
   if (reviewedContent !== fullContent) {
-    onChunk('\n\n---\n*Quality review applied [VERIFY] flags to uncertain citations.*');
-    fullContent = reviewedContent;
+    onChunk("\n\n---\n*Quality review applied [VERIFY] flags to uncertain citations.*");
   }
+  const finalContent = reviewedContent !== fullContent ? reviewedContent : fullContent;
 
-  const plainText = markdownToPlainText(fullContent);
-  const flags = extractVerifyFlags(fullContent);
-  const detectedStatutes = extractDetectedStatutes(fullContent);
-  const suggestedCases = extractSuggestedCases(fullContent);
-  const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const plainText = markdownToPlainText(finalContent);
+  const flags = extractVerifyFlags(finalContent);
+  const detectedStatutes = extractDetectedStatutes(finalContent);
+  const suggestedCases = extractSuggestedCases(finalContent);
+  const applicableRules = detectedStatutes.filter(
+    (s) => s.toLowerCase().includes("rule") || s.toLowerCase().includes("SI")
+  );
   const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
-    content: fullContent,
-    providerUsed: 'Replit AI (gpt-5.2)',
+    content: finalContent,
+    providerUsed: providerName,
     flags,
     detectedStatutes,
     suggestedCases,
@@ -289,23 +555,31 @@ export function getProviderStatus(): Array<{
   rateLimited: boolean;
   circuitState: string;
 }> {
-  const cozeAvailable = !!(process.env.COZE_API_TOKEN && process.env.COZE_BOT_ID);
-  return [
-    {
-      name: 'Replit AI (gpt-5.2)',
-      available: true,
-      dailyUsage: 0,
-      dailyLimit: 999999,
-      rateLimited: false,
-      circuitState: 'CLOSED',
-    },
-    {
-      name: 'coze',
-      available: cozeAvailable,
+  const statuses = [...providerStates.values()].map((state) => {
+    getOrResetUsage(state);
+    const stats = state.circuit.getStats();
+    const rateLimited = state.dailyUsage >= state.config.dailyLimit;
+    return {
+      name: state.config.name,
+      available: isProviderAvailable(state),
+      dailyUsage: state.dailyUsage,
+      dailyLimit: state.config.dailyLimit,
+      rateLimited,
+      circuitState: stats.state,
+    };
+  });
+
+  const cozeConfigured = !!(process.env.COZE_API_TOKEN && process.env.COZE_BOT_ID);
+  if (!cozeConfigured && !statuses.find((s) => s.name === "Coze")) {
+    statuses.push({
+      name: "Coze",
+      available: false,
       dailyUsage: 0,
       dailyLimit: 99999,
       rateLimited: false,
-      circuitState: 'N/A',
-    },
-  ];
+      circuitState: "N/A",
+    });
+  }
+
+  return statuses;
 }
