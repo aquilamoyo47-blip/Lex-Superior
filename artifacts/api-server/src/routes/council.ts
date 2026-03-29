@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { consultationsTable, messagesTable, casesTable, statutesTable } from "@workspace/db";
 import { eq, desc, ilike, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { searchZimLII, buildZimLIISearchUrl } from "../lib/zimliiScraper.js";
 
 const router: IRouter = Router();
 
@@ -289,11 +290,6 @@ function extractSuggestedCases(content: string): string[] {
   return [...new Set(matches)].slice(0, 8);
 }
 
-// ─── ZimLII search URL builder ─────────────────────────────────────────────
-function buildZimLIISearchUrl(query: string): string {
-  return `https://zimlii.org/search/?q=${encodeURIComponent(query)}`;
-}
-
 // ─── Case Deep Dive endpoint ────────────────────────────────────────────────
 router.post("/council/case-deep-dive", async (req: Request, res: Response) => {
   const { query, userId } = req.body;
@@ -306,37 +302,42 @@ router.post("/council/case-deep-dive", async (req: Request, res: Response) => {
   const trimmedQuery = query.trim();
 
   try {
-    // ── Step 1: Search local database ──────────────────────────────────────
+    // ── Step 1: Run DB search + ZimLII scraper in parallel ─────────────────
     const searchTerm = `%${trimmedQuery.toLowerCase()}%`;
-    const dbCases = await db
-      .select()
-      .from(casesTable)
-      .where(
-        or(
-          ilike(casesTable.citation, searchTerm),
-          ilike(casesTable.title, searchTerm),
-          ilike(casesTable.principle, searchTerm),
-          ilike(casesTable.headnote, searchTerm),
-          sql`EXISTS (SELECT 1 FROM unnest(${casesTable.subjectTags}) tag WHERE lower(tag) LIKE ${searchTerm})`
-        )
-      )
-      .limit(5);
 
-    const dbStatutes = await db
-      .select()
-      .from(statutesTable)
-      .where(
-        or(
-          ilike(statutesTable.title, searchTerm),
-          ilike(statutesTable.summary, searchTerm),
-          sql`EXISTS (SELECT 1 FROM unnest(${statutesTable.tags}) tag WHERE lower(tag) LIKE ${searchTerm})`
+    const [dbCases, dbStatutes, zimliiResult] = await Promise.all([
+      db
+        .select()
+        .from(casesTable)
+        .where(
+          or(
+            ilike(casesTable.citation, searchTerm),
+            ilike(casesTable.title, searchTerm),
+            ilike(casesTable.principle, searchTerm),
+            ilike(casesTable.headnote, searchTerm),
+            sql`EXISTS (SELECT 1 FROM unnest(${casesTable.subjectTags}) tag WHERE lower(tag) LIKE ${searchTerm})`
+          )
         )
-      )
-      .limit(3);
+        .limit(5),
+
+      db
+        .select()
+        .from(statutesTable)
+        .where(
+          or(
+            ilike(statutesTable.title, searchTerm),
+            ilike(statutesTable.summary, searchTerm),
+            sql`EXISTS (SELECT 1 FROM unnest(${statutesTable.tags}) tag WHERE lower(tag) LIKE ${searchTerm})`
+          )
+        )
+        .limit(3),
+
+      searchZimLII(trimmedQuery).catch(() => null),
+    ]);
 
     // ── Step 2: Build context-enriched deep dive prompt ────────────────────
     const dbContext = dbCases.length > 0
-      ? `\n\nFOUND IN LOCAL DATABASE:\n${dbCases.map(c =>
+      ? `\n\nFOUND IN LOCAL LEX SUPERIOR DATABASE:\n${dbCases.map(c =>
           `- ${c.citation} | ${c.court} | ${c.year ?? "year unknown"}\n  Title: ${c.title}\n  Principle: ${c.principle ?? "N/A"}\n  Headnote: ${c.headnote?.slice(0, 200) ?? "N/A"}`
         ).join("\n\n")}`
       : "\n\nNOT FOUND IN LOCAL DATABASE — rely on your training knowledge and flag uncertain citations with [VERIFY].";
@@ -347,14 +348,20 @@ router.post("/council/case-deep-dive", async (req: Request, res: Response) => {
         ).join("\n")}`
       : "";
 
+    const zimliiContext = zimliiResult && zimliiResult.results.length > 0
+      ? `\n\nZIMLII SEARCH RESULTS (${zimliiResult.source === "live" ? "live scrape" : "curated index"}, ${zimliiResult.results.length} matches):\n${zimliiResult.results.slice(0, 6).map(r =>
+          `- ${r.title}${r.citation ? ` | ${r.citation}` : ""}${r.court ? ` | ${r.court}` : ""}${r.date ? ` | ${r.date}` : ""}\n  URL: ${r.url}${r.snippet ? `\n  Snippet: ${r.snippet.slice(0, 150)}` : ""}`
+        ).join("\n\n")}`
+      : "";
+
     const zimliiUrl = buildZimLIISearchUrl(trimmedQuery);
 
     const deepDivePrompt = `CASE DEEP DIVE REQUEST: "${trimmedQuery}"
 
 ZimLII Research Link: ${zimliiUrl}
-${dbContext}${statuteContext}
+${dbContext}${statuteContext}${zimliiContext}
 
-Please perform the complete 8-step Research Pipeline analysis for this case. Structure your response with clear headings for each step. For the Citation Chain step (Step 7), identify at least 3 upstream authorities this case relied on and, where possible, 2-3 downstream cases that have subsequently applied or distinguished it. Flag every uncertain citation with [VERIFY: citation]. Include the ZimLII search link above in Step 1.`;
+Please perform the complete 8-step Research Pipeline analysis for this case. Structure your response with clear headings for each step. For the Citation Chain step (Step 7), identify at least 3 upstream authorities this case relied on and, where possible, 2-3 downstream cases that have subsequently applied or distinguished it. Where ZimLII results are provided above, reference their URLs as research sources. Flag every uncertain citation with [VERIFY: citation]. Include the ZimLII search link above in Step 1.`;
 
     // ── Step 3: SSE stream the analysis ────────────────────────────────────
     const member = COUNCIL_MEMBERS.find(m => m.id === "case-law-analyst")!;
@@ -378,7 +385,7 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
     res.setHeader("X-Consultation-Id", consultation.id);
     res.flushHeaders();
 
-    // Send structured metadata immediately so the UI can render links/DB hits
+    // Send structured metadata immediately so the UI can render links/DB hits and ZimLII results
     res.write(`data: ${JSON.stringify({
       meta: {
         query: trimmedQuery,
@@ -386,6 +393,17 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
         dbHits: dbCases.length,
         dbCases: dbCases.map(c => ({ citation: c.citation, title: c.title, court: c.court, year: c.year })),
         dbStatutes: dbStatutes.map(s => ({ title: s.title, chapter: s.chapter })),
+        zimliiHits: zimliiResult?.results.length ?? 0,
+        zimliiSource: zimliiResult?.source ?? "empty",
+        zimliiResults: (zimliiResult?.results ?? []).slice(0, 8).map(r => ({
+          title: r.title,
+          url: r.url,
+          court: r.court,
+          date: r.date,
+          citation: r.citation,
+          documentType: r.documentType,
+          snippet: r.snippet?.slice(0, 200),
+        })),
       }
     })}\n\n`);
 

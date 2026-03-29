@@ -15,12 +15,25 @@ import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+interface ZimLIIResult {
+  title: string;
+  url: string;
+  court?: string;
+  date?: string;
+  citation?: string;
+  documentType?: string;
+  snippet?: string;
+}
+
 interface DeepDiveMeta {
   query: string;
   zimliiUrl: string;
   dbHits: number;
   dbCases: Array<{ citation: string; title: string; court: string; year: number | null }>;
   dbStatutes: Array<{ title: string; chapter: string | null }>;
+  zimliiHits: number;
+  zimliiSource: "live" | "sample" | "empty";
+  zimliiResults: ZimLIIResult[];
 }
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -465,18 +478,18 @@ export default function Council() {
                       <GitFork className="w-3 h-3" /> ZimLII Research
                     </h4>
 
-                    {/* ZimLII Link */}
+                    {/* ZimLII search link */}
                     <a
                       href={deepDiveMeta.zimliiUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 text-xs p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-colors mb-3 group"
+                      className="flex items-center gap-2 text-xs p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-colors mb-3"
                     >
                       <ExternalLink className="w-3 h-3 shrink-0" />
-                      <span className="flex-1 truncate">Search ZimLII for "{deepDiveMeta.query.slice(0, 30)}"</span>
+                      <span className="flex-1 truncate">Search ZimLII for "{deepDiveMeta.query.slice(0, 28)}"</span>
                     </a>
 
-                    {/* DB Hits */}
+                    {/* Local DB hits */}
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                       <Database className="w-3 h-3" />
                       <span>{deepDiveMeta.dbHits > 0 ? `${deepDiveMeta.dbHits} match${deepDiveMeta.dbHits > 1 ? "es" : ""} in local database` : "Not in local database"}</span>
@@ -494,7 +507,7 @@ export default function Council() {
                     )}
 
                     {deepDiveMeta.dbStatutes.length > 0 && (
-                      <div>
+                      <div className="mb-3">
                         <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">Related Statutes</p>
                         <div className="space-y-1">
                           {deepDiveMeta.dbStatutes.map((s, i) => (
@@ -504,6 +517,46 @@ export default function Council() {
                           ))}
                         </div>
                       </div>
+                    )}
+
+                    {/* ZimLII search results */}
+                    {deepDiveMeta.zimliiResults.length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                          <BookOpen className="w-3 h-3" />
+                          ZimLII Documents
+                          <span className="ml-1 px-1 rounded bg-purple-500/20 text-purple-300">
+                            {deepDiveMeta.zimliiSource === "live" ? "live" : "index"}
+                          </span>
+                        </p>
+                        <div className="space-y-1.5">
+                          {deepDiveMeta.zimliiResults.map((r, i) => (
+                            <a
+                              key={i}
+                              href={r.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-xs p-2 rounded-lg bg-purple-500/5 border border-purple-500/15 hover:bg-purple-500/15 hover:border-purple-500/30 transition-colors group"
+                            >
+                              <p className="text-foreground/90 font-medium leading-snug line-clamp-2 group-hover:text-purple-300 transition-colors">
+                                {r.title}
+                              </p>
+                              {(r.citation || r.court) && (
+                                <p className="text-muted-foreground mt-0.5">
+                                  {r.citation}{r.citation && r.court ? " · " : ""}{r.court}
+                                </p>
+                              )}
+                              {r.date && (
+                                <p className="text-muted-foreground/60 text-[10px]">{r.date}</p>
+                              )}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {deepDiveMeta.zimliiHits === 0 && deepDiveMeta.dbHits === 0 && (
+                      <p className="text-[11px] text-muted-foreground/60 mt-2 italic">No matches — AI analysis proceeds from training knowledge.</p>
                     )}
 
                     <Separator className="my-3 opacity-20" />
