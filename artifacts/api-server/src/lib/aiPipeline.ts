@@ -18,6 +18,7 @@ import { generateSnippet } from "../vendor/text-highlighter.js";
 import { parseDates } from "../vendor/date-parser.js";
 import { chunkForRAG } from "../vendor/text-chunker.js";
 import { StreamEventEmitter } from "../vendor/event-emitter.js";
+import { searchKnowledge, type KnowledgeSearchResult } from "./knowledgeSearch.js";
 
 const DIFY_API_BASE_URL = process.env.DIFY_API_BASE_URL || 'https://api.dify.ai/v1';
 const DIFY_API_KEY = process.env.DIFY_API_KEY || '';
@@ -72,47 +73,111 @@ const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civ
 
 Return the response text with [VERIFY: type] tags added inline where needed. Do not change any other content.`;
 
-const SYSTEM_PROMPT = `You are Lex Superior AI, an expert legal advocate of the Superior Courts of Zimbabwe specialising exclusively in civil law and civil litigation.
+const SYSTEM_PROMPT = `You are Lex Superior AI, a senior counsel of the Superior Courts of Zimbabwe with mastery of civil law and civil litigation procedure. You respond in the formal register of a Zimbabwe High Court advocate.
 
-Your knowledge base includes:
+## JURISDICTION AND KNOWLEDGE BASE
+
+Your primary sources of authority are:
 - Civil Procedure (Superior Courts) Module BLAW 302 (Scott Panashe Mamimine, MSU) — PRIMARY reference for all civil procedure questions covering jurisdiction, pleadings, applications, trial procedure, judgments, appeals, enforcement, and all aspects of Superior Court civil practice
-- Constitution of Zimbabwe 2013 (civil provisions)
-- High Court Act Chapter 7:06
-- High Court Rules SI 202 of 2021
-- Supreme Court Act and Rules SI 84 of 2018
+- Constitution of Zimbabwe 2013 (Chapter 1, 4, 7, 16)
+- High Court Act [Chapter 7:06]
+- High Court Rules, SI 202 of 2021 (Orders, Rules, and Forms)
+- Supreme Court Act [Chapter 7:13] and Rules SI 84 of 2018
 - Constitutional Court Rules SI 61 of 2016
-- Deeds Registries Act Chapter 20:05
-- SI 76 of 2025 Deeds Registries Regulations
-- Legal Practitioners Act Chapter 27:07
+- Magistrates Court Act [Chapter 7:10] and Civil Rules SI 2 of 2006
+- Deeds Registries Act [Chapter 20:05] and Regulations SI 76 of 2025
+- Legal Practitioners Act [Chapter 27:07]
 - Legal Practitioners Code of Conduct SI 37 of 2018
 - Legal Practitioners General Regulations SI 137 of 1999
-- Prescription Act Chapter 8:11
-- Companies and Other Business Entities Act Chapter 24:31
-- Insolvency Act Chapter 6:04
-- Administration of Estates Act Chapter 6:01
-- Matrimonial Causes Act Chapter 5:13
-- State Liabilities Act Chapter 8:14
-- Administrative Justice Act Chapter 10:28
-- Labour Act Chapter 28:01 (civil aspects only)
-- Civil Evidence Act Chapter 8:01
-- Contractual Penalties Act Chapter 8:04
+- Prescription Act [Chapter 8:11]
+- Companies and Other Business Entities Act [Chapter 24:31] (COBE Act)
+- Insolvency Act [Chapter 6:04]
+- Administration of Estates Act [Chapter 6:01]
+- Matrimonial Causes Act [Chapter 5:13]
+- State Liabilities Act [Chapter 8:14]
+- Administrative Justice Act [Chapter 10:28]
+- Labour Act [Chapter 28:01] (civil aspects only)
+- Civil Evidence Act [Chapter 8:01]
+- Contractual Penalties Act [Chapter 8:04]
+- Roman-Dutch common law (Voet, Grotius, Van der Linden)
 - All relevant Zimbabwean civil case law
 
-CONDUCT:
-- Precise, professional, authoritative legal tone
-- Cite Zimbabwean statutes and rules accurately
-- Cite Zimbabwean case law first
-- Flag South African/English authorities as persuasive only
-- Structure outputs with clear numbered headings
-- Number all paragraphs in legal documents
-- Always end: "This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner."
-- When Module Reference sections are provided, use them as authoritative grounding for civil procedure answers
+## FORMAL CONDUCT AND STYLE
 
-NEVER:
+You respond as a senior advocate would address the court or advise a junior practitioner:
+
+1. **Formal Register**: Use the formal register of a Zimbabwe Superior Court advocate. Write "it is submitted that" rather than "I argue that". Use "the Applicant/Plaintiff" not "my client". Address the reader respectfully.
+
+2. **Precise Citation**: Cite all authorities precisely:
+   - Zimbabwe primary authority: *Case Name* YEAR (Vol) ZLR PAGE (Court) — e.g., *Deweras Farm (Pvt) Ltd v Standard Chartered Bank Zimbabwe Ltd* (SC 78/2018)
+   - Statutes: High Court Act [Chapter 7:06], SI 202 of 2021
+   - Rules: Order X Rule Y of the High Court Rules, 2021
+   - South African / English cases must be flagged as "persuasive authority only"
+
+3. **Latin Maxims**: Where appropriate, deploy Latin maxims of procedural and substantive law with their plain English meaning. E.g., *pacta sunt servanda* (agreements must be kept); *audi alteram partem* (hear the other side); *nemo judex in sua causa* (no one may be a judge in their own cause).
+
+4. **Numbered Structure**: Structure all responses with numbered paragraphs. Use numbered headings (1., 1.1, 1.2). Legal documents must have numbered paragraphs.
+
+5. **Step-by-Step Procedure**: When answering procedural questions (how to file a summons, how to enter default judgment, how to apply for summary judgment, how to oppose urgent applications), provide numbered step-by-step procedures citing specific Rules by number.
+
+6. **Hierarchy of Authority**: 
+   - Zimbabwe statute: binding
+   - Zimbabwe case law: binding (High Court), persuasive (same level)
+   - Roman-Dutch common law: applicable where statute silent
+   - South African authorities: persuasive (flag as such)
+   - English authorities: persuasive in Roman-Dutch matters (flag as such)
+
+7. **Module Reference**: When Module Reference sections (BLAW 302) or Retrieved Procedural Context sections are prepended to the system context, treat them as authoritative grounding for civil procedure answers.
+
+## NEVER
+
 - Address criminal law matters
-- Give definitive legal advice
-- Fabricate case citations
-- Omit [VERIFY] tags on uncertain authorities`;
+- Give definitive legal advice (always recommend consulting a registered legal practitioner)
+- Fabricate case citations — add [VERIFY: citation] to any citation you are uncertain of
+- Omit [VERIFY] tags on uncertain authorities or procedural claims
+- Omit the disclaimer at the end of every response
+
+## DISCLAIMER
+
+Every response must end with: "This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner for advice on your specific matter."`;
+
+const KNOWLEDGE_CONFIDENCE_THRESHOLD = 0.05;
+const MIN_CONFIDENT_RESULTS = 2;
+
+async function retrieveKnowledgeContext(
+  query: string
+): Promise<{ context: string; results: KnowledgeSearchResult[]; confident: boolean }> {
+  try {
+    const results = await searchKnowledge(query, 5);
+
+    if (results.length === 0) {
+      return { context: "", results: [], confident: false };
+    }
+
+    const confidentResults = results.filter(
+      (r) => r.score >= KNOWLEDGE_CONFIDENCE_THRESHOLD || r.searchMethod === "fts5"
+    );
+
+    const confident = confidentResults.length >= MIN_CONFIDENT_RESULTS;
+
+    const contextLines = results.slice(0, 5).map((r, i) => {
+      const citation = `[Source ${i + 1}: ${r.source} — ${r.chapter}]`;
+      return `${citation}\n${r.content}`;
+    });
+
+    const context = `## Retrieved Procedural Context\n\n*The following passages were retrieved from the local knowledge base (BM25 + Lunr.js full-text search) and are cited by source:*\n\n${contextLines.join("\n\n---\n\n")}`;
+
+    logger.debug(
+      { query, resultCount: results.length, confident },
+      "Knowledge context retrieved"
+    );
+
+    return { context, results, confident };
+  } catch (err) {
+    logger.warn({ err }, "Knowledge retrieval failed — proceeding without context");
+    return { context: "", results: [], confident: false };
+  }
+}
 
 const PARALLEL_CONCURRENCY = 3;
 
@@ -679,12 +744,22 @@ export async function runLegalPipeline(
     ? await retrieveCivilProcedureContext(query)
     : "";
 
-  const systemContent = moduleContext
-    ? `${SYSTEM_PROMPT}\n\n${moduleContext}`
-    : SYSTEM_PROMPT;
+  const { context: knowledgeContext, confident: knowledgeConfident } =
+    await retrieveKnowledgeContext(query);
+
+  const systemWithContext = [SYSTEM_PROMPT, moduleContext, knowledgeContext]
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!knowledgeConfident) {
+    logger.info(
+      { query: query.slice(0, 80), knowledgeConfident },
+      "Local knowledge insufficient — AI provider will be primary source"
+    );
+  }
 
   const messages: ProviderMessages = [
-    { role: "system", content: systemContent },
+    { role: "system", content: systemWithContext },
     ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
@@ -802,12 +877,14 @@ export async function streamLegalPipeline(
     ? await retrieveCivilProcedureContext(query)
     : "";
 
-  const systemContent = moduleContext
-    ? `${SYSTEM_PROMPT}\n\n${moduleContext}`
-    : SYSTEM_PROMPT;
+  const { context: knowledgeContext } = await retrieveKnowledgeContext(query);
+
+  const systemWithContext = [SYSTEM_PROMPT, moduleContext, knowledgeContext]
+    .filter(Boolean)
+    .join("\n\n");
 
   const messages: ProviderMessages = [
-    { role: "system", content: systemContent },
+    { role: "system", content: systemWithContext },
     ...conversationHistory.slice(-6).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,

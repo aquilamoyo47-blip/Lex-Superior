@@ -7,6 +7,7 @@ import vaultRouter from "./vault";
 import documentsRouter from "./documents";
 import councilRouter from "./council";
 import webhooksRouter from "./webhooks";
+import knowledgeRouter from "./knowledge";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(vaultRouter);
 router.use(documentsRouter);
 router.use(councilRouter);
 router.use(webhooksRouter);
+router.use(knowledgeRouter);
 
 export default router;
