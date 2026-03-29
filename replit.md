@@ -69,32 +69,46 @@ artifacts-monorepo/
 ## Pages
 
 1. **Landing** (`/`) — Animated hero, 6 feature cards, 3-step how-it-works
-2. **Chat** (`/chat`) — 3-panel resizable layout with AI pipeline progress
-3. **Documents** (`/documents`) — Document Drafting Studio (all court document types)
-4. **Library** (`/library`) — Statutes, Court Rules, Case Law, Principles, Forms, Checklists, Updates
-5. **Vault** (`/vault`) — Personal file storage with folder tree
-6. **Guides** (`/guides`) — 12 step-by-step procedural guides
-7. **About** (`/about`) — Mission, disclaimer, feedback
+2. **AI Council** (`/council`) — 5 specialised AI advocates with dedicated system prompts
+3. **Chat** (`/chat`) — 3-panel resizable layout with AI pipeline progress
+4. **Documents** (`/documents`) — Document Drafting Studio (all court document types)
+5. **Library** (`/library`) — Statutes, Court Rules, Case Law, Principles, Forms, Checklists, Updates
+6. **Vault** (`/vault`) — Personal file storage with folder tree
+7. **Guides** (`/guides`) — 12 step-by-step procedural guides
+8. **About** (`/about`) — Mission, disclaimer, feedback
 
-## AI Pipeline
+## AI Council — 5 Specialist Agents
 
-Multi-provider rotation with in-memory caching:
-- Primary: SambaNova (DeepSeek R1 671B)
-- Fallback 1: Groq Key 1 (deepseek-r1-distill-llama-70b)
-- Fallback 2: Groq Key 2
-- Fallback 3: Cerebras (llama3.1-70b)
-- Fallback 4: OpenRouter (deepseek/deepseek-r1:free)
+All powered by Replit AI (OpenAI gpt-5.2) — no external API keys required.
 
-Quality review step flags suspicious citations as [VERIFY: type].
+| Council Member | Specialty | Color |
+|---|---|---|
+| General Counsel | Broad civil law research | Gold |
+| Document Drafter | Technical court document drafting | Blue |
+| Case Law Analyst | Zimbabwe Superior Court judgments | Purple |
+| Procedure Guide | Step-by-step civil procedure | Green |
+| Constitutional Counsel | Constitutional civil remedies | Amber |
 
-## Environment Variables Needed
+Each member has:
+- Dedicated system prompt with deep Zimbabwe civil law knowledge
+- SSE streaming (text appears word-by-word)
+- [VERIFY] citation flags for uncertain authorities
+- Detected statutes & cited cases panel
+- In-memory caching (24h TTL)
 
+## AI Integration
+
+- **Provider**: Replit AI Integrations (OpenAI proxy) — no user API keys needed
+- **Model**: gpt-5.2 for all council members
+- **Streaming**: Server-Sent Events (SSE)
+- **Package**: `@workspace/integrations-openai-ai-server` in `lib/`
+- **Environment**: `AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY` (auto-provisioned)
+
+## Legacy AI Pipeline (Chat page)
+
+The `/chat` page still uses the old multi-provider pipeline. External API keys optional:
 ```
-SAMBANOVA_API_KEY=     # cloud.sambanova.ai — free
-GROQ_API_KEY_1=        # console.groq.com — free
-GROQ_API_KEY_2=        # backup groq account
-CEREBRAS_API_KEY=      # inference.cerebras.ai — free
-OPENROUTER_API_KEY=    # openrouter.ai — free models
+SAMBANOVA_API_KEY    GROQ_API_KEY_1    CEREBRAS_API_KEY    OPENROUTER_API_KEY
 ```
 
 ## Database Schema

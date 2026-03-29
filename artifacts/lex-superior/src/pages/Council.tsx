@@ -1,0 +1,524 @@
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { AppLayout } from "@/components/layout/AppLayout";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  Scale, FileText, BookOpen, ClipboardList, Landmark,
+  Send, Copy, Download, Bookmark, AlertTriangle, User,
+  Brain, PlusCircle, ChevronLeft, Sparkles, Loader2
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  Scale, FileText, BookOpen, ClipboardList, Landmark,
+};
+
+const COLOR_MAP: Record<string, { bg: string; border: string; badge: string; glow: string }> = {
+  gold:   { bg: "bg-primary/10",   border: "border-primary/30",   badge: "bg-primary/20 text-primary",         glow: "shadow-primary/20" },
+  blue:   { bg: "bg-blue-500/10",  border: "border-blue-500/30",  badge: "bg-blue-500/20 text-blue-300",        glow: "shadow-blue-500/20" },
+  purple: { bg: "bg-purple-500/10",border: "border-purple-500/30",badge: "bg-purple-500/20 text-purple-300",    glow: "shadow-purple-500/20" },
+  green:  { bg: "bg-green-500/10", border: "border-green-500/30", badge: "bg-green-500/20 text-green-300",      glow: "shadow-green-500/20" },
+  amber:  { bg: "bg-amber-500/10", border: "border-amber-500/30", badge: "bg-amber-500/20 text-amber-300",      glow: "shadow-amber-500/20" },
+};
+
+interface CouncilMember {
+  id: string;
+  name: string;
+  title: string;
+  specialty: string;
+  description: string;
+  icon: string;
+  color: string;
+}
+
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
+  flags?: Array<{ type: string; text: string }>;
+  detectedStatutes?: string[];
+  suggestedCases?: string[];
+  memberId?: string;
+}
+
+function MemberCard({ member, onSelect }: { member: CouncilMember; onSelect: () => void }) {
+  const Icon = ICON_MAP[member.icon] || Scale;
+  const colors = COLOR_MAP[member.color] || COLOR_MAP.gold;
+  return (
+    <Card
+      onClick={onSelect}
+      className={cn(
+        "cursor-pointer transition-all duration-200 hover:scale-[1.02] group border",
+        colors.border,
+        "bg-card/40 hover:bg-card/70 backdrop-blur-sm"
+      )}
+    >
+      <CardContent className="p-6">
+        <div className={cn(
+          "w-14 h-14 rounded-2xl flex items-center justify-center mb-5 border transition-all duration-200",
+          colors.bg, colors.border,
+          `group-hover:shadow-lg group-hover:${colors.glow}`
+        )}>
+          <Icon className={cn("w-7 h-7", colors.badge.split(" ")[1])} />
+        </div>
+        <h3 className="font-display font-bold text-lg text-foreground mb-1">{member.name}</h3>
+        <Badge className={cn("text-xs mb-3 font-medium border-0", colors.badge)}>{member.title}</Badge>
+        <p className="text-sm text-muted-foreground leading-relaxed">{member.description}</p>
+        <Button
+          className={cn(
+            "w-full mt-5 font-semibold transition-all",
+            member.color === "gold"
+              ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+              : "bg-white/5 hover:bg-white/10 text-foreground border border-white/10"
+          )}
+        >
+          <Sparkles className="w-4 h-4 mr-2" /> Consult {member.name}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StreamingDot() {
+  return (
+    <span className="inline-flex gap-0.5 ml-1 align-middle">
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce"
+          style={{ animationDelay: `${i * 0.15}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+export default function Council() {
+  const [members, setMembers] = useState<CouncilMember[]>([]);
+  const [selectedMember, setSelectedMember] = useState<CouncilMember | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [consultationId, setConsultationId] = useState<string | null>(null);
+  const [detectedStatutes, setDetectedStatutes] = useState<string[]>([]);
+  const [suggestedCases, setSuggestedCases] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    fetch("/api/council/members")
+      .then(r => r.json())
+      .then(setMembers)
+      .catch(() => setMembers([]));
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isStreaming]);
+
+  const selectMember = useCallback((member: CouncilMember) => {
+    setSelectedMember(member);
+    setMessages([]);
+    setConsultationId(null);
+    setDetectedStatutes([]);
+    setSuggestedCases([]);
+    setInput("");
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || !selectedMember || isStreaming) return;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: input,
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    const userInput = input;
+    setInput("");
+    setIsStreaming(true);
+
+    const assistantId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      streaming: true,
+      memberId: selectedMember.id,
+    }]);
+
+    abortRef.current = new AbortController();
+
+    try {
+      const response = await fetch("/api/council/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: userInput,
+          memberId: selectedMember.id,
+          consultationId,
+          userId: localStorage.getItem("userId") || "anonymous",
+        }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+
+      if (contentType.includes("text/event-stream")) {
+        const newConsultationId = response.headers.get("x-consultation-id");
+        if (newConsultationId && !consultationId) setConsultationId(newConsultationId);
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                setMessages(prev => prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, content: m.content + data.content }
+                    : m
+                ));
+              }
+              if (data.done) {
+                setMessages(prev => prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, streaming: false, flags: data.flags || [], detectedStatutes: data.detectedStatutes || [], suggestedCases: data.suggestedCases || [] }
+                    : m
+                ));
+                if (data.detectedStatutes?.length) setDetectedStatutes(data.detectedStatutes);
+                if (data.suggestedCases?.length) setSuggestedCases(data.suggestedCases);
+                if (data.consultationId) setConsultationId(data.consultationId);
+              }
+              if (data.error) throw new Error(data.error);
+            } catch { /* skip malformed chunks */ }
+          }
+        }
+      } else {
+        const data = await response.json();
+        if (data.consultationId) setConsultationId(data.consultationId);
+        setMessages(prev => prev.map(m =>
+          m.id === assistantId
+            ? { ...m, content: data.content, streaming: false, flags: data.flags || [], detectedStatutes: data.detectedStatutes || [], suggestedCases: data.suggestedCases || [] }
+            : m
+        ));
+        if (data.detectedStatutes?.length) setDetectedStatutes(data.detectedStatutes);
+        if (data.suggestedCases?.length) setSuggestedCases(data.suggestedCases);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId
+          ? { ...m, content: "An error occurred. Please try again.", streaming: false }
+          : m
+      ));
+      toast.error("Connection error. Please try again.");
+    } finally {
+      setIsStreaming(false);
+    }
+  }, [input, selectedMember, isStreaming, consultationId]);
+
+  const colors = selectedMember ? COLOR_MAP[selectedMember.color] || COLOR_MAP.gold : COLOR_MAP.gold;
+  const ActiveIcon = selectedMember ? (ICON_MAP[selectedMember.icon] || Scale) : Scale;
+
+  return (
+    <AppLayout>
+      <div className="flex-1 flex overflow-hidden h-[calc(100vh-80px)]">
+
+        {!selectedMember ? (
+          /* ─── Council Selection View ─── */
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+              <div className="text-center mb-12">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-semibold mb-6">
+                  <Sparkles className="w-4 h-4" />
+                  AI Legal Council
+                </div>
+                <h1 className="font-display font-bold text-4xl sm:text-5xl text-foreground mb-4">
+                  Your Expert <span className="text-gradient-gold">Legal Council</span>
+                </h1>
+                <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+                  Five specialised AI advocates, each an expert in their domain of Zimbabwe civil law. Select a council member to begin your consultation.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {members.length === 0 ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <Card key={i} className="border-white/5 bg-card/20 animate-pulse">
+                      <CardContent className="p-6">
+                        <div className="w-14 h-14 rounded-2xl bg-white/5 mb-5" />
+                        <div className="h-5 bg-white/5 rounded mb-2 w-3/4" />
+                        <div className="h-3 bg-white/5 rounded mb-4 w-1/2" />
+                        <div className="space-y-2">
+                          <div className="h-3 bg-white/5 rounded w-full" />
+                          <div className="h-3 bg-white/5 rounded w-5/6" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  members.map(member => (
+                    <MemberCard key={member.id} member={member} onSelect={() => selectMember(member)} />
+                  ))
+                )}
+              </div>
+
+              <div className="mt-12 p-6 rounded-2xl bg-card/30 border border-white/5 text-center">
+                <p className="text-sm text-muted-foreground">
+                  <strong className="text-foreground">Powered by Lex Superior AI</strong> — All council members are specialised AI models trained on Zimbabwe civil law.<br />
+                  Outputs constitute legal research assistance only and not formal legal advice.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ─── Active Council Chat ─── */
+          <>
+            {/* Left: Member Info Sidebar */}
+            <aside className="w-72 border-r border-white/5 bg-background/50 flex-col hidden lg:flex">
+              <div className="p-4 border-b border-white/5">
+                <Button
+                  variant="ghost"
+                  onClick={() => setSelectedMember(null)}
+                  className="w-full justify-start text-muted-foreground hover:text-foreground mb-3"
+                >
+                  <ChevronLeft className="w-4 h-4 mr-2" /> All Council Members
+                </Button>
+                <div className={cn(
+                  "w-16 h-16 rounded-2xl flex items-center justify-center border mb-4",
+                  colors.bg, colors.border
+                )}>
+                  <ActiveIcon className={cn("w-8 h-8", colors.badge.split(" ")[1])} />
+                </div>
+                <h3 className="font-display font-bold text-lg text-foreground leading-tight">{selectedMember.name}</h3>
+                <Badge className={cn("text-xs mt-1 mb-3 border-0", colors.badge)}>{selectedMember.title}</Badge>
+                <p className="text-xs text-muted-foreground leading-relaxed">{selectedMember.description}</p>
+              </div>
+
+              <div className="p-4 border-b border-white/5">
+                <Button
+                  onClick={() => { setMessages([]); setConsultationId(null); setDetectedStatutes([]); setSuggestedCases([]); }}
+                  className="w-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-semibold"
+                >
+                  <PlusCircle className="w-4 h-4 mr-2" /> New Consultation
+                </Button>
+              </div>
+
+              {(detectedStatutes.length > 0 || suggestedCases.length > 0) && (
+                <ScrollArea className="flex-1 p-4">
+                  {detectedStatutes.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Detected Statutes</h4>
+                      <div className="space-y-2">
+                        {detectedStatutes.map((s, i) => (
+                          <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80">
+                            {s}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {suggestedCases.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Cited Cases</h4>
+                      <div className="space-y-2">
+                        {suggestedCases.map((c, i) => (
+                          <div key={i} className="text-xs p-2 rounded-lg bg-white/5 border border-white/5 text-foreground/80 italic">
+                            {c}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </ScrollArea>
+              )}
+            </aside>
+
+            {/* Centre: Chat */}
+            <main className="flex-1 flex flex-col relative bg-card/20">
+              {/* Mobile back button */}
+              <div className="lg:hidden flex items-center gap-3 p-4 border-b border-white/5">
+                <Button variant="ghost" size="icon" onClick={() => setSelectedMember(null)}>
+                  <ChevronLeft className="w-5 h-5" />
+                </Button>
+                <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", colors.bg, colors.border)}>
+                  <ActiveIcon className={cn("w-4 h-4", colors.badge.split(" ")[1])} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">{selectedMember.name}</p>
+                  <p className="text-xs text-muted-foreground">{selectedMember.title}</p>
+                </div>
+              </div>
+
+              <ScrollArea className="flex-1 p-4 sm:p-6 lg:p-8" ref={scrollRef}>
+                <div className="max-w-3xl mx-auto space-y-8 pb-40">
+                  {messages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center text-center pt-20">
+                      <div className={cn("w-20 h-20 rounded-full flex items-center justify-center mb-6 border", colors.bg, colors.border)}>
+                        <ActiveIcon className={cn("w-10 h-10", colors.badge.split(" ")[1])} />
+                      </div>
+                      <h2 className="text-2xl font-display font-bold mb-2">{selectedMember.name}</h2>
+                      <p className="text-muted-foreground max-w-md text-sm">{selectedMember.description}</p>
+                      <div className="mt-8 flex flex-wrap gap-2 justify-center">
+                        {getSamplePrompts(selectedMember.id).map((p, i) => (
+                          <Button
+                            key={i}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setInput(p)}
+                            className="text-xs h-auto py-2 px-3 bg-card/50 border-white/10 hover:border-primary/30 text-muted-foreground hover:text-foreground text-left"
+                          >
+                            {p}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {messages.map((msg) => (
+                    <div key={msg.id} className={cn("flex gap-4 w-full", msg.role === "user" ? "flex-row-reverse" : "flex-row")}>
+                      <div className={cn(
+                        "w-10 h-10 rounded-full flex items-center justify-center shrink-0 border",
+                        msg.role === "user" ? "bg-secondary border-white/10" : cn(colors.bg, colors.border)
+                      )}>
+                        {msg.role === "user"
+                          ? <User className="w-5 h-5 text-foreground/70" />
+                          : <ActiveIcon className={cn("w-5 h-5", colors.badge.split(" ")[1])} />
+                        }
+                      </div>
+
+                      <div className={cn("max-w-[90%]", msg.role === "user" ? "bg-secondary px-5 py-4 rounded-2xl rounded-tr-sm border border-white/5" : "")}>
+                        {msg.role === "assistant" && (
+                          <div className={cn("glass-card rounded-2xl rounded-tl-sm p-6 border-l-4 relative overflow-hidden", colors.border.replace("border-", "border-l-"))}>
+                            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/5 text-xs text-muted-foreground">
+                              <Brain className="w-3.5 h-3.5" />
+                              <span className="font-medium">{selectedMember.name}</span>
+                              <Badge className={cn("text-[10px] border-0 ml-1", colors.badge)}>{selectedMember.title}</Badge>
+                              {msg.streaming && <Loader2 className="w-3 h-3 animate-spin ml-auto text-primary" />}
+                            </div>
+
+                            {msg.flags && msg.flags.length > 0 && (
+                              <div className="mb-4 flex flex-wrap gap-2">
+                                {msg.flags.map((flag, idx) => (
+                                  <Badge key={idx} variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 py-1 text-xs">
+                                    <AlertTriangle className="w-3 h-3 mr-1.5" />
+                                    [VERIFY: {flag.type.toUpperCase()}]
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="prose prose-invert prose-sm prose-p:leading-relaxed max-w-none">
+                              <ReactMarkdown>{msg.content}</ReactMarkdown>
+                              {msg.streaming && <StreamingDot />}
+                            </div>
+
+                            {!msg.streaming && msg.content && (
+                              <div className="mt-5 pt-4 border-t border-white/5 flex gap-2">
+                                <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(msg.content); toast.success("Copied"); }} className="h-8 text-muted-foreground hover:text-foreground text-xs">
+                                  <Copy className="w-3.5 h-3.5 mr-1.5" /> Copy
+                                </Button>
+                                <Button variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-foreground text-xs ml-auto">
+                                  <Bookmark className="w-3.5 h-3.5 mr-1.5" /> Save
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {msg.role === "user" && <p className="leading-relaxed text-sm">{msg.content}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+
+              {/* Input */}
+              <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background to-transparent pt-10">
+                <div className="max-w-3xl mx-auto">
+                  <div className="relative">
+                    <textarea
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                      placeholder={`Ask ${selectedMember.name} a legal question...`}
+                      disabled={isStreaming}
+                      rows={2}
+                      className="w-full min-h-[60px] max-h-[180px] bg-card/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 pr-14 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 resize-none transition-all shadow-lg disabled:opacity-60"
+                    />
+                    <Button
+                      size="icon"
+                      className="absolute right-3 bottom-3 h-9 w-9 bg-primary hover:bg-primary/90 rounded-xl"
+                      onClick={handleSend}
+                      disabled={!input.trim() || isStreaming}
+                    >
+                      {isStreaming
+                        ? <Loader2 className="w-4 h-4 text-primary-foreground animate-spin" />
+                        : <Send className="w-4 h-4 text-primary-foreground" />
+                      }
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2 text-center">Shift+Enter for new line · outputs are legal research assistance only</p>
+                </div>
+              </div>
+            </main>
+          </>
+        )}
+      </div>
+    </AppLayout>
+  );
+}
+
+function getSamplePrompts(memberId: string): string[] {
+  const prompts: Record<string, string[]> = {
+    "general-counsel": [
+      "What are the elements of a valid contract under Zimbabwe law?",
+      "Explain the Prescription Act and how it bars civil claims",
+      "What remedies are available for breach of contract?",
+    ],
+    "document-drafter": [
+      "Draft a Notice of Motion for an urgent interdict",
+      "Draft a Founding Affidavit for a summary judgment application",
+      "Draft a Certificate of Urgency for a chamber application",
+    ],
+    "case-law-analyst": [
+      "Summarise Kuvarega v Registrar General 1998 (1) ZLR 188",
+      "What cases govern the test for urgency in Zimbabwe?",
+      "Trace the development of the estoppel principle in Zimbabwe courts",
+    ],
+    "procedure-guide": [
+      "Walk me through the default judgment procedure step by step",
+      "What are the time limits for filing a notice of appeal?",
+      "How do I apply for a provisional order in the High Court?",
+    ],
+    "constitutional-counsel": [
+      "How do I enforce fundamental rights under Section 85 of the Constitution?",
+      "What is the test for a constitutional declaration of invalidity?",
+      "Explain legitimate expectation in Zimbabwean administrative law",
+    ],
+  };
+  return prompts[memberId] || prompts["general-counsel"];
+}

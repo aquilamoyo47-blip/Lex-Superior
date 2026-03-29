@@ -5,6 +5,7 @@ import consultationsRouter from "./consultations";
 import libraryRouter from "./library";
 import vaultRouter from "./vault";
 import documentsRouter from "./documents";
+import councilRouter from "./council";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(consultationsRouter);
 router.use(libraryRouter);
 router.use(vaultRouter);
 router.use(documentsRouter);
+router.use(councilRouter);
 
 export default router;

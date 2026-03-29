@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Landing from "@/pages/Landing";
 import Chat from "@/pages/Chat";
+import Council from "@/pages/Council";
 import Documents from "@/pages/Documents";
 import Library from "@/pages/Library";
 import Vault from "@/pages/Vault";
@@ -17,6 +18,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Landing} />
+      <Route path="/council" component={Council} />
       <Route path="/chat" component={Chat} />
       <Route path="/documents" component={Documents} />
       <Route path="/library" component={Library} />

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel } from "lucide-react";
+import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", icon: Scale },
+  { href: "/council", label: "AI Council", icon: Users, highlight: true },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/library", label: "Library", icon: BookOpen },
@@ -34,7 +35,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex gap-3 items-start sm:items-center max-w-7xl mx-auto w-full">
             <Scale className="w-5 h-5 text-destructive shrink-0 mt-0.5 sm:mt-0" />
             <p className="text-sm text-foreground/90 font-medium pr-8">
-              <strong className="text-destructive font-bold">Notice:</strong> Lex Superior is an AI-powered legal research assistant. All outputs constitute legal research assistance only and do not constitute formal legal advice. Consult a duly registered legal practitioner.
+              <strong className="text-destructive font-bold">Notice:</strong> Lex Superior AI is an AI-powered legal research assistant. All outputs constitute legal research assistance only and do not constitute formal legal advice. Consult a duly registered legal practitioner.
             </p>
           </div>
           <button 
@@ -57,7 +58,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <Scale className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <h1 className="font-display font-bold text-xl leading-none text-foreground tracking-wide">Lex Superior</h1>
+              <h1 className="font-display font-bold text-xl leading-none text-foreground tracking-wide">Lex Superior AI</h1>
               <span className="text-[10px] uppercase tracking-widest text-primary font-semibold">Zimbabwe Civil Law</span>
             </div>
           </Link>
@@ -66,13 +67,18 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <nav className="hidden md:flex items-center gap-1">
             {NAV_ITEMS.map((item) => {
               const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
+              const isHighlight = (item as any).highlight;
               return (
                 <Link key={item.href} href={item.href}>
                   <Button
                     variant={isActive ? "secondary" : "ghost"}
                     className={cn(
                       "px-4 transition-all duration-200",
-                      isActive ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-foreground/70 hover:text-foreground hover:bg-white/5"
+                      isActive
+                        ? "bg-primary/10 text-primary hover:bg-primary/20"
+                        : isHighlight
+                        ? "text-primary border border-primary/30 hover:bg-primary/10 font-semibold"
+                        : "text-foreground/70 hover:text-foreground hover:bg-white/5"
                     )}
                   >
                     <item.icon className="w-4 h-4 mr-2 opacity-70" />
@@ -116,14 +122,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2 opacity-50 grayscale">
             <Scale className="w-5 h-5" />
-            <span className="font-display font-semibold">Lex Superior</span>
+            <span className="font-display font-semibold">Lex Superior AI</span>
           </div>
           <p className="text-sm text-muted-foreground text-center max-w-2xl">
-            "Your Expert Legal Advocate for the Superior Courts of Zimbabwe."<br/>
+            "Your Expert AI Legal Advocate for the Superior Courts of Zimbabwe."<br/>
             Civil law and civil litigation scope only. Not for criminal matters.
           </p>
           <div className="text-sm text-muted-foreground">
-            &copy; {new Date().getFullYear()} Lex Superior. All rights reserved.
+            &copy; {new Date().getFullYear()} Lex Superior AI. All rights reserved.
           </div>
         </div>
       </footer>
