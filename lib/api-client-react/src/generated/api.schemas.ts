@@ -34,12 +34,21 @@ export const ChatRequestPracticeArea = {
   labour: "labour",
 } as const;
 
+export type ChatRequestProvider =
+  (typeof ChatRequestProvider)[keyof typeof ChatRequestProvider];
+
+export const ChatRequestProvider = {
+  default: "default",
+  coze: "coze",
+} as const;
+
 export interface ChatRequest {
   consultationId?: string;
   message: string;
   practiceArea: ChatRequestPracticeArea;
   userId?: string;
   attachedFiles?: string[];
+  provider?: ChatRequestProvider;
 }
 
 export type VerifyFlagType =

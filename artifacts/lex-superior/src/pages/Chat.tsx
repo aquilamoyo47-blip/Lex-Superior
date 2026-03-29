@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Send, Scale, Copy, Download, Bookmark, AlertTriangle, FileText, Bot, User, Brain, Search, PlusCircle, CheckCircle2, CircleDashed, MessageSquare, BookOpen } from "lucide-react";
+import { Send, Scale, Copy, Download, Bookmark, AlertTriangle, Bot, User, Brain, Search, PlusCircle, CheckCircle2, CircleDashed, MessageSquare, BookOpen, Zap } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useListConsultations } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,11 @@ import { toast } from "sonner";
 
 const PRACTICE_AREAS = [
   "All", "Contract", "Property", "Procedure", "Constitutional", "Administrative", "Family", "Insolvency", "Labour"
+];
+
+const AI_PROVIDERS = [
+  { id: "default", label: "Replit AI" },
+  { id: "coze", label: "Coze Agent" },
 ];
 
 interface Message {
@@ -32,6 +37,7 @@ interface Message {
 export default function Chat() {
   const [input, setInput] = useState("");
   const [practiceArea, setPracticeArea] = useState("Procedure");
+  const [aiProvider, setAiProvider] = useState<"default" | "coze">("default");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [consultationId, setConsultationId] = useState<string | null>(null);
@@ -65,7 +71,7 @@ export default function Chat() {
       id: assistantMsgId,
       role: "assistant",
       content: "",
-      providerUsed: "Replit AI (gpt-5.2)",
+      providerUsed: aiProvider === "coze" ? "Coze" : "Replit AI (gpt-5.2)",
       fromCache: false,
       flags: [],
       streaming: true,
@@ -85,6 +91,7 @@ export default function Chat() {
           message: userMsg.content,
           practiceArea,
           consultationId,
+          provider: aiProvider,
         }),
         signal: controller.signal,
       });
@@ -205,7 +212,9 @@ export default function Chat() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
                     <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
-                    <span className="text-xs font-medium text-foreground/80">Replit AI (gpt-5.2)</span>
+                    <span className="text-xs font-medium text-foreground/80">
+                      {aiProvider === "coze" ? "Coze Agent" : "Replit AI (gpt-5.2)"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -312,7 +321,8 @@ export default function Chat() {
                           <CheckCircle2 className="w-4 h-4" /> Context loaded
                         </div>
                         <div className="flex items-center gap-3 text-primary">
-                          <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> Replit AI analysing
+                          <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                          {aiProvider === "coze" ? "Coze Agent analysing" : "Replit AI analysing"}
                         </div>
                         <div className="flex items-center gap-3 opacity-50">
                           <CircleDashed className="w-4 h-4" /> Formatting response
@@ -328,7 +338,7 @@ export default function Chat() {
           {/* Input Area */}
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background via-background to-transparent pt-10">
             <div className="max-w-4xl mx-auto">
-              <div className="mb-3 flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              <div className="mb-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
                 {PRACTICE_AREAS.map(area => (
                   <Badge
                     key={area}
@@ -340,6 +350,22 @@ export default function Chat() {
                     onClick={() => setPracticeArea(area)}
                   >
                     {area}
+                  </Badge>
+                ))}
+              </div>
+              <div className="mb-3 flex gap-2 items-center">
+                <Zap className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                {AI_PROVIDERS.map(p => (
+                  <Badge
+                    key={p.id}
+                    variant={aiProvider === p.id ? "default" : "outline"}
+                    className={cn(
+                      "cursor-pointer transition-colors",
+                      aiProvider === p.id ? "bg-primary text-primary-foreground hover:bg-primary/90" : "hover:bg-white/5 bg-background/50 backdrop-blur-md"
+                    )}
+                    onClick={() => setAiProvider(p.id as "default" | "coze")}
+                  >
+                    {p.label}
                   </Badge>
                 ))}
               </div>

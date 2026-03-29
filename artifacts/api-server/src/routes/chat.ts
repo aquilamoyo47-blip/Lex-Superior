@@ -3,15 +3,21 @@ import { db } from "@workspace/db";
 import { consultationsTable, messagesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { streamLegalPipeline, getProviderStatus } from "../lib/aiPipeline";
+import { callCoze, isCozeAvailable } from "../lib/cozeProvider";
 import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
 
 router.post("/chat", async (req, res) => {
-  const { message, practiceArea = "all", consultationId, userId } = req.body;
+  const { message, practiceArea = "all", consultationId, userId, provider } = req.body;
 
   if (!message || typeof message !== "string") {
     res.status(400).json({ error: "Bad Request", message: "message is required" });
+    return;
+  }
+
+  if (provider === "coze" && !isCozeAvailable()) {
+    res.status(503).json({ error: "Service Unavailable", message: "Coze provider is not configured. Please set COZE_API_TOKEN and COZE_BOT_ID environment variables." });
     return;
   }
 
@@ -55,14 +61,20 @@ router.post("/chat", async (req, res) => {
 
     const startTime = Date.now();
 
-    const result = await streamLegalPipeline(
-      message,
-      practiceArea,
-      conversationHistory,
-      (chunk) => {
-        res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
-      }
-    );
+    let result;
+    if (provider === "coze") {
+      result = await callCoze(message, practiceArea, conversationHistory);
+      res.write(`data: ${JSON.stringify({ content: result.content })}\n\n`);
+    } else {
+      result = await streamLegalPipeline(
+        message,
+        practiceArea,
+        conversationHistory,
+        (chunk) => {
+          res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+        }
+      );
+    }
 
     const responseTimeMs = Date.now() - startTime;
 

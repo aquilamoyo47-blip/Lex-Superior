@@ -73,7 +73,7 @@ async function qualityReview(content: string): Promise<string> {
   }
 }
 
-function extractVerifyFlags(content: string): Array<{ type: string; text: string }> {
+export function extractVerifyFlags(content: string): Array<{ type: string; text: string }> {
   const flags: Array<{ type: string; text: string }> = [];
   const pattern = /\[VERIFY:\s*(citation|section|procedure|authority)\]/gi;
   let match;
@@ -83,7 +83,7 @@ function extractVerifyFlags(content: string): Array<{ type: string; text: string
   return flags;
 }
 
-function extractDetectedStatutes(content: string): string[] {
+export function extractDetectedStatutes(content: string): string[] {
   const entities = extractEntities(content);
   const fromNlp = [...entities.statutes, ...entities.rules];
 
@@ -103,7 +103,7 @@ function extractDetectedStatutes(content: string): string[] {
   return [...new Set([...fromNlp, ...fromLegacy])].slice(0, 10);
 }
 
-function extractSuggestedCases(content: string): string[] {
+export function extractSuggestedCases(content: string): string[] {
   const entities = extractEntities(content);
   const fromNlp = entities.cases;
 
@@ -289,12 +289,23 @@ export function getProviderStatus(): Array<{
   rateLimited: boolean;
   circuitState: string;
 }> {
-  return [{
-    name: 'Replit AI (gpt-5.2)',
-    available: true,
-    dailyUsage: 0,
-    dailyLimit: 999999,
-    rateLimited: false,
-    circuitState: 'CLOSED',
-  }];
+  const cozeAvailable = !!(process.env.COZE_API_TOKEN && process.env.COZE_BOT_ID);
+  return [
+    {
+      name: 'Replit AI (gpt-5.2)',
+      available: true,
+      dailyUsage: 0,
+      dailyLimit: 999999,
+      rateLimited: false,
+      circuitState: 'CLOSED',
+    },
+    {
+      name: 'coze',
+      available: cozeAvailable,
+      dailyUsage: 0,
+      dailyLimit: 99999,
+      rateLimited: false,
+      circuitState: 'N/A',
+    },
+  ];
 }
