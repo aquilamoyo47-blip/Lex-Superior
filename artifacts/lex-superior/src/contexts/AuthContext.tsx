@@ -6,6 +6,8 @@ interface AuthContextValue {
   logout: () => void;
 }
 
+const SESSION_KEY = "lex_admin_session";
+
 const AuthContext = createContext<AuthContextValue>({
   isAuthenticated: false,
   login: () => {},
@@ -13,10 +15,19 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return sessionStorage.getItem(SESSION_KEY) === "1";
+  });
 
-  const login = useCallback(() => setIsAuthenticated(true), []);
-  const logout = useCallback(() => setIsAuthenticated(false), []);
+  const login = useCallback(() => {
+    sessionStorage.setItem(SESSION_KEY, "1");
+    setIsAuthenticated(true);
+  }, []);
+
+  const logout = useCallback(() => {
+    sessionStorage.removeItem(SESSION_KEY);
+    setIsAuthenticated(false);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, login, logout }}>
