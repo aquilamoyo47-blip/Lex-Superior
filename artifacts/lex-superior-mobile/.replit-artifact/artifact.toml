@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/lex-superior-mobile/"
+title = "Lex Superior Mobile"
+version = "1.0.0"
+id = "artifacts/lex-superior-mobile"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/"
+name = "expo"
+paths = [ "/lex-superior-mobile/" ]
+localPort = 24677
+
+[services.development]
+run = "pnpm --filter @workspace/lex-superior-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lex-superior-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/lex-superior-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "24677"
+BASE_PATH = "/lex-superior-mobile/"
