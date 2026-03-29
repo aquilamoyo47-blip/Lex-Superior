@@ -8,17 +8,25 @@ import { useListVaultFiles } from "@workspace/api-client-react";
 
 const FOLDERS = ["My Consultations", "Generated Documents", "Court Papers", "Bookmarks"];
 
-const MOCK_FILES = [
-  { id: "1", name: "Urgent_Chamber_App_Draft.docx", type: "docx", date: "Today", size: "24 KB" },
-  { id: "2", name: "High_Court_Rules_Summary.pdf", type: "pdf", date: "Yesterday", size: "1.2 MB" },
-  { id: "3", name: "Kuvarega_Case_Notes.txt", type: "txt", date: "Oct 12", size: "8 KB" },
+type DisplayFile = {
+  id: string;
+  name: string;
+  fileType?: string | null;
+  createdAt?: Date | string | null;
+  fileSize?: number | null;
+};
+
+const MOCK_FILES: DisplayFile[] = [
+  { id: "1", name: "Urgent_Chamber_App_Draft.docx", fileType: "docx" },
+  { id: "2", name: "High_Court_Rules_Summary.pdf", fileType: "pdf" },
+  { id: "3", name: "Kuvarega_Case_Notes.txt", fileType: "txt" },
 ];
 
 export default function Vault() {
   const [search, setSearch] = useState("");
   const { data, isLoading } = useListVaultFiles({ search });
   
-  const files = data?.files || MOCK_FILES;
+  const files: DisplayFile[] = data?.files || MOCK_FILES;
 
   return (
     <AppLayout>
@@ -89,8 +97,8 @@ export default function Vault() {
                   </div>
                   <h4 className="font-medium truncate mb-1" title={file.name}>{file.name}</h4>
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{file.date}</span>
-                    <span>{file.size}</span>
+                    <span>{file.createdAt ? new Date(file.createdAt as string).toLocaleDateString() : "—"}</span>
+                    <span>{file.fileSize ? `${Math.round((file.fileSize as number) / 1024)} KB` : "—"}</span>
                   </div>
                 </CardContent>
               </Card>

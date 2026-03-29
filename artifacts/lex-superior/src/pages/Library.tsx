@@ -63,7 +63,7 @@ export default function Library() {
                         <span className="text-sm text-muted-foreground">{statute.chapter}</span>
                       </div>
                       <div className="flex gap-2">
-                        {statute.tags.map(tag => (
+                        {(statute.tags ?? []).map((tag: string) => (
                           <Badge key={tag} variant="secondary" className="bg-white/5 border-white/10">{tag}</Badge>
                         ))}
                       </div>
