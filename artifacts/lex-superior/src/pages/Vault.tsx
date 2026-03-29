@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Folder, FileText, UploadCloud, Search, Star, MoreVertical, Trash2 } from "lucide-react";
+import { Folder, FileText, UploadCloud, Search, Star, MoreVertical, Plus } from "lucide-react";
 import { useListVaultFiles } from "@workspace/api-client-react";
+import { toast } from "sonner";
 
 const FOLDERS = ["My Consultations", "Generated Documents", "Court Papers", "Bookmarks"];
 
@@ -24,19 +25,45 @@ const MOCK_FILES: DisplayFile[] = [
 
 export default function Vault() {
   const [search, setSearch] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { data, isLoading } = useListVaultFiles({ search });
-  
+
   const files: DisplayFile[] = data?.files || MOCK_FILES;
+
+  const handleFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const names = Array.from(fileList).map(f => f.name).join(", ");
+    toast.success(`Uploading: ${names}`);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    handleFiles(e.dataTransfer.files);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragOver(false);
+  };
 
   return (
     <AppLayout>
       <div className="flex h-[calc(100vh-80px)]">
         {/* Left Sidebar - Folders */}
         <aside className="w-64 border-r border-white/5 bg-background/50 p-6 hidden md:block">
-          <Button className="w-full mb-8 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20">
+          <Button
+            className="w-full mb-8 bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={() => fileInputRef.current?.click()}
+          >
             <UploadCloud className="w-4 h-4 mr-2" /> Upload File
           </Button>
-          
+
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">Folders</h4>
           <nav className="space-y-1">
             {FOLDERS.map(folder => (
@@ -59,21 +86,59 @@ export default function Vault() {
 
         {/* Main Content */}
         <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
-          <div className="flex justify-between items-center mb-8">
+          {/* Header row with prominent upload button */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
             <h1 className="text-3xl font-display font-bold">All Files</h1>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search files..." className="pl-9 bg-card border-white/10" value={search} onChange={e => setSearch(e.target.value)} />
+            <div className="flex items-center gap-3">
+              <div className="relative w-56">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search files..."
+                  className="pl-9 bg-card border-white/10"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+              <Button
+                className="bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 font-semibold"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Plus className="w-4 h-4 mr-2" /> Upload Files
+              </Button>
             </div>
           </div>
 
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            onChange={e => handleFiles(e.target.files)}
+          />
+
           {/* Drag & Drop Zone */}
-          <div className="border-2 border-dashed border-white/10 rounded-2xl p-10 flex flex-col items-center justify-center text-center bg-card/20 hover:bg-card/40 transition-colors mb-8 cursor-pointer">
-            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-              <UploadCloud className="w-8 h-8 text-primary" />
+          <div
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center text-center transition-colors mb-8 cursor-pointer ${isDragOver ? "border-primary bg-primary/10" : "border-white/10 bg-card/20 hover:bg-card/40 hover:border-primary/40"}`}
+          >
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${isDragOver ? "bg-primary/20" : "bg-primary/10"}`}>
+              <UploadCloud className={`w-8 h-8 ${isDragOver ? "text-primary" : "text-primary"}`} />
             </div>
             <h3 className="text-lg font-bold mb-1">Drag and drop files here</h3>
-            <p className="text-sm text-muted-foreground">PDF, DOCX, TXT up to 50MB</p>
+            <p className="text-sm text-muted-foreground mb-3">PDF, DOCX, TXT up to 50MB</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-primary/30 text-primary hover:bg-primary/10"
+              onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
+            >
+              <Plus className="w-4 h-4 mr-1" /> Browse Files
+            </Button>
           </div>
 
           {/* File Grid */}

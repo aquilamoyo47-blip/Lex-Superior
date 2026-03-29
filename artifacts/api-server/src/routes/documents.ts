@@ -37,6 +37,10 @@ CASE DETAILS:
 - City/Location: ${caseDetails.city || "Harare"}
 - Legal Practitioner: ${caseDetails.legalPractitioner || "[LEGAL PRACTITIONER]"}
 - Law Firm: ${caseDetails.firm || "[FIRM NAME]"}
+${caseDetails.factsOfMatter ? `\nFACTS OF THE MATTER:\n${caseDetails.factsOfMatter}` : ""}
+${caseDetails.groundsArguments ? `\nGROUNDS / LEGAL ARGUMENTS:\n${caseDetails.groundsArguments}` : ""}
+${caseDetails.reliefSought ? `\nRELIEF SOUGHT:\n${caseDetails.reliefSought}` : ""}
+${caseDetails.attachedDocuments && caseDetails.attachedDocuments.length > 0 ? `\nSUPPORTING DOCUMENTS ATTACHED:\n${caseDetails.attachedDocuments.map((name: string) => `- ${name}`).join("\n")}` : ""}
 ${additionalInfo ? `\nADDITIONAL INFORMATION:\n${additionalInfo}` : ""}
 
 Generate the complete document with:
