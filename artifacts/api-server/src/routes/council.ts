@@ -1,8 +1,8 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { db } from "@workspace/db";
-import { consultationsTable, messagesTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { consultationsTable, messagesTable, casesTable, statutesTable } from "@workspace/db";
+import { eq, desc, ilike, or, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
