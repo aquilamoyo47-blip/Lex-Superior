@@ -1,5 +1,10 @@
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
+import { LRUCache } from "../vendor/lru-cache.js";
+import { countTokens, truncateToTokenLimit } from "../vendor/token-counter.js";
+import { markdownToPlainText } from "../vendor/markdown-parser.js";
+import { chunkText } from "../vendor/sentence-splitter.js";
+import { extractEntities } from "../vendor/nlp-entity.js";
 
 const QUALITY_REVIEW_PROMPT = `You are a legal quality reviewer for Zimbabwe civil law. Review the following legal response and FLAG ONLY (do not rewrite):
 - Suspicious case citations → add [VERIFY: citation] after them
@@ -79,25 +84,33 @@ function extractVerifyFlags(content: string): Array<{ type: string; text: string
 }
 
 function extractDetectedStatutes(content: string): string[] {
-  const statutes: string[] = [];
-  const patterns = [
+  const entities = extractEntities(content);
+  const fromNlp = [...entities.statutes, ...entities.rules];
+
+  const legacyPatterns = [
     /High Court Rules?(?:\s+SI\s+\d+\s+of\s+\d+)?/gi,
     /Constitution(?:\s+of\s+Zimbabwe)?(?:\s+2013)?/gi,
     /(?:Chapter\s+\d+:\d+)/gi,
     /SI\s+\d+\s+of\s+\d+/gi,
     /(?:Act|Rules?)\s+Chapter\s+\d+:\d+/gi,
   ];
-  for (const pattern of patterns) {
+  const fromLegacy: string[] = [];
+  for (const pattern of legacyPatterns) {
     const matches = content.match(pattern);
-    if (matches) statutes.push(...matches);
+    if (matches) fromLegacy.push(...matches);
   }
-  return [...new Set(statutes)].slice(0, 10);
+
+  return [...new Set([...fromNlp, ...fromLegacy])].slice(0, 10);
 }
 
 function extractSuggestedCases(content: string): string[] {
+  const entities = extractEntities(content);
+  const fromNlp = entities.cases;
+
   const casePattern = /[A-Z][a-z]+ v [A-Z][a-z]+(?:\s+\d{4}\s*\(\d+\)\s+ZLR\s+\d+)?/g;
-  const matches = content.match(casePattern) || [];
-  return [...new Set(matches)].slice(0, 8);
+  const fromLegacy = content.match(casePattern) || [];
+
+  return [...new Set([...fromNlp, ...fromLegacy])].slice(0, 8);
 }
 
 export interface PipelineResult {
@@ -108,9 +121,14 @@ export interface PipelineResult {
   suggestedCases: string[];
   applicableRules: string[];
   fromCache: boolean;
+  tokenCount?: number;
+  chunks?: number;
 }
 
-const queryCache = new Map<string, { result: PipelineResult; expiry: number }>();
+const queryCache = new LRUCache<string, { result: PipelineResult; expiry: number }>({
+  max: 500,
+  ttl: 7 * 24 * 60 * 60 * 1000,
+});
 
 function getCacheKey(query: string, practiceArea: string): string {
   return `${practiceArea}:${query.toLowerCase().trim().slice(0, 100)}`;
@@ -119,6 +137,18 @@ function getCacheKey(query: string, practiceArea: string): string {
 function isGeneralQuery(query: string): boolean {
   const generalKeywords = ['requirements', 'procedure', 'rule', 'section', 'how to', 'what is', 'define', 'explain', 'elements', 'test', 'principle'];
   return generalKeywords.some(k => query.toLowerCase().includes(k));
+}
+
+function preprocessQuery(query: string): { processedQuery: string; chunks: number } {
+  const inputTokens = countTokens(query);
+  if (inputTokens > 2000) {
+    const textChunks = chunkText(query, 1500, 200);
+    const chunks = textChunks.length;
+    const processedQuery = textChunks.map(c => c.text).join('\n\n---\n\n');
+    logger.info({ chunks, inputTokens }, 'Long query chunked for processing');
+    return { processedQuery, chunks };
+  }
+  return { processedQuery: truncateToTokenLimit(query, 2000), chunks: 1 };
 }
 
 export async function runLegalPipeline(
@@ -132,13 +162,15 @@ export async function runLegalPipeline(
     return { ...cached.result, fromCache: true };
   }
 
+  const { processedQuery, chunks } = preprocessQuery(query);
+
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...conversationHistory.slice(-6).map(m => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${query}` }
+    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${processedQuery}` }
   ];
 
   const response = await openai.chat.completions.create({
@@ -151,10 +183,12 @@ export async function runLegalPipeline(
   const rawContent = response.choices[0]?.message?.content || '';
   const content = await qualityReview(rawContent);
 
+  const plainText = markdownToPlainText(content);
   const flags = extractVerifyFlags(content);
   const detectedStatutes = extractDetectedStatutes(content);
   const suggestedCases = extractSuggestedCases(content);
   const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
     content,
@@ -164,6 +198,8 @@ export async function runLegalPipeline(
     suggestedCases,
     applicableRules,
     fromCache: false,
+    tokenCount,
+    chunks,
   };
 
   const ttl = isGeneralQuery(query) ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
@@ -185,13 +221,15 @@ export async function streamLegalPipeline(
     return { ...cached.result, fromCache: true };
   }
 
+  const { processedQuery, chunks } = preprocessQuery(query);
+
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...conversationHistory.slice(-6).map(m => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
-    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${query}` }
+    { role: 'user', content: `Practice Area: ${practiceArea}\n\n${processedQuery}` }
   ];
 
   logger.info({ practiceArea }, 'Streaming legal pipeline with Replit AI (gpt-5.2)');
@@ -218,10 +256,12 @@ export async function streamLegalPipeline(
     fullContent = reviewedContent;
   }
 
+  const plainText = markdownToPlainText(fullContent);
   const flags = extractVerifyFlags(fullContent);
   const detectedStatutes = extractDetectedStatutes(fullContent);
   const suggestedCases = extractSuggestedCases(fullContent);
   const applicableRules = detectedStatutes.filter(s => s.toLowerCase().includes('rule') || s.toLowerCase().includes('SI'));
+  const tokenCount = countTokens(plainText);
 
   const pipelineResult: PipelineResult = {
     content: fullContent,
@@ -231,6 +271,8 @@ export async function streamLegalPipeline(
     suggestedCases,
     applicableRules,
     fromCache: false,
+    tokenCount,
+    chunks,
   };
 
   const ttl = isGeneralQuery(query) ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
@@ -245,6 +287,7 @@ export function getProviderStatus(): Array<{
   dailyUsage: number;
   dailyLimit: number;
   rateLimited: boolean;
+  circuitState: string;
 }> {
   return [{
     name: 'Replit AI (gpt-5.2)',
@@ -252,5 +295,6 @@ export function getProviderStatus(): Array<{
     dailyUsage: 0,
     dailyLimit: 999999,
     rateLimited: false,
+    circuitState: 'CLOSED',
   }];
 }

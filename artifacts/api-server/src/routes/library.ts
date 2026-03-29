@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { statutesTable, casesTable, notesTable, updatesTable } from "@workspace/db";
 import { ilike, or, eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { fuzzySearch } from "../vendor/fuzzy-search.js";
 
 const router: IRouter = Router();
 
@@ -12,23 +13,26 @@ router.get("/library/statutes", async (req, res) => {
   try {
     const conditions = [];
     if (category) conditions.push(eq(statutesTable.category, category));
-    if (search) {
-      conditions.push(
-        or(
-          ilike(statutesTable.title, `%${search}%`),
-          ilike(statutesTable.summary, `%${search}%`)
-        )!
-      );
-    }
 
     const statutes = await db
       .select()
       .from(statutesTable)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(statutesTable.category, statutesTable.title)
-      .limit(100);
+      .limit(500);
 
-    res.json({ statutes, total: statutes.length });
+    if (search && search.trim().length >= 2) {
+      const results = fuzzySearch(statutes, search, {
+        keys: ['title', 'summary', 'category'],
+        threshold: 0.45,
+        limit: 100,
+      });
+      const fuzzyStatutes = results.map(r => r.item);
+      res.json({ statutes: fuzzyStatutes, total: fuzzyStatutes.length, fuzzySearch: true });
+    } else {
+      const limited = statutes.slice(0, 100);
+      res.json({ statutes: limited, total: limited.length, fuzzySearch: false });
+    }
   } catch (err) {
     req.log.error({ err }, "List statutes error");
     res.status(500).json({ error: "Internal Server Error" });
@@ -54,25 +58,28 @@ router.get("/library/cases", async (req, res) => {
     const conditions = [];
     if (court) conditions.push(eq(casesTable.court, court));
     if (year) conditions.push(eq(casesTable.year, parseInt(year)));
-    if (search) {
-      conditions.push(
-        or(
-          ilike(casesTable.citation, `%${search}%`),
-          ilike(casesTable.title, `%${search}%`),
-          ilike(casesTable.principle, `%${search}%`),
-          ilike(casesTable.headnote, `%${search}%`)
-        )!
-      );
-    }
 
     const cases = await db
       .select()
       .from(casesTable)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(sql`${casesTable.year} DESC NULLS LAST`, casesTable.citation)
-      .limit(100);
+      .limit(500);
 
-    res.json({ cases, total: cases.length });
+    if (search && search.trim().length >= 2) {
+      const results = fuzzySearch(cases, search, {
+        keys: ['citation', 'title', 'principle', 'headnote'],
+        threshold: 0.45,
+        limit: 100,
+      });
+      const fuzzyCases = results.map(r => r.item);
+      res.json({ cases: fuzzyCases, total: fuzzyCases.length, fuzzySearch: true });
+    } else {
+      const limited = cases.slice(0, 100);
+      res.json({ cases: limited, total: limited.length, fuzzySearch: false });
+    }
+
+    void tags;
   } catch (err) {
     req.log.error({ err }, "List cases error");
     res.status(500).json({ error: "Internal Server Error" });
@@ -97,23 +104,26 @@ router.get("/library/notes", async (req, res) => {
   try {
     const conditions = [];
     if (topic) conditions.push(ilike(notesTable.topic, `%${topic}%`));
-    if (search) {
-      conditions.push(
-        or(
-          ilike(notesTable.topic, `%${search}%`),
-          ilike(notesTable.content, `%${search}%`)
-        )!
-      );
-    }
 
     const notes = await db
       .select()
       .from(notesTable)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(notesTable.unit, notesTable.topic)
-      .limit(100);
+      .limit(500);
 
-    res.json({ notes, total: notes.length });
+    if (search && search.trim().length >= 2) {
+      const results = fuzzySearch(notes, search, {
+        keys: ['topic', 'content'],
+        threshold: 0.45,
+        limit: 100,
+      });
+      const fuzzyNotes = results.map(r => r.item);
+      res.json({ notes: fuzzyNotes, total: fuzzyNotes.length, fuzzySearch: true });
+    } else {
+      const limited = notes.slice(0, 100);
+      res.json({ notes: limited, total: limited.length, fuzzySearch: false });
+    }
   } catch (err) {
     req.log.error({ err }, "List notes error");
     res.status(500).json({ error: "Internal Server Error" });
