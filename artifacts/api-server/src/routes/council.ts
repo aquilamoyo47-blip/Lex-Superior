@@ -461,6 +461,15 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
 });
 
 router.get("/council/members", (_req, res) => {
+  const ICON_KEY_MAP: Record<string, string> = {
+    Scale: "scale", FileText: "sparkles", BookOpen: "book",
+    ClipboardList: "clipboard", Landmark: "landmark",
+    Gavel: "gavel", Search: "search", Shield: "shield", BrainCircuit: "brain",
+  };
+  const ACCENT_KEY_MAP: Record<string, string> = {
+    gold: "gold", blue: "blue", purple: "violet",
+    green: "emerald", amber: "cyan", violet: "violet", emerald: "emerald",
+  };
   res.json(COUNCIL_MEMBERS.map(m => ({
     id: m.id,
     name: m.name,
@@ -469,6 +478,8 @@ router.get("/council/members", (_req, res) => {
     description: m.description,
     icon: m.icon,
     color: m.color,
+    icon_key: ICON_KEY_MAP[m.icon] || "scale",
+    accent_key: ACCENT_KEY_MAP[m.color] || "gold",
   })));
 });
 
