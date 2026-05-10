@@ -17,7 +17,7 @@ const PRACTICE_AREAS = [
 ];
 
 const AI_PROVIDERS = [
-  { id: "default", label: "Replit AI" },
+  { id: "default", label: "Claude AI" },
   { id: "coze", label: "Coze Agent" },
 ];
 
@@ -71,7 +71,7 @@ export default function Chat() {
       id: assistantMsgId,
       role: "assistant",
       content: "",
-      providerUsed: aiProvider === "coze" ? "Coze" : "Replit AI (gpt-5.2)",
+      providerUsed: aiProvider === "coze" ? "Coze" : "Claude AI",
       fromCache: false,
       flags: [],
       streaming: true,
@@ -213,7 +213,7 @@ export default function Chat() {
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
                     <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
                     <span className="text-xs font-medium text-foreground/80">
-                      {aiProvider === "coze" ? "Coze Agent" : "Replit AI (gpt-5.2)"}
+                      {aiProvider === "coze" ? "Coze Agent" : "Claude AI"}
                     </span>
                   </div>
                 </div>
@@ -256,7 +256,7 @@ export default function Chat() {
                           <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/5 text-xs text-muted-foreground font-medium">
                             <span className="flex items-center gap-1.5">
                               <Brain className="w-3.5 h-3.5" />
-                              {msg.providerUsed || "Replit AI (gpt-5.2)"}
+                              {msg.providerUsed || "Claude AI"}
                             </span>
                             {msg.fromCache && <Badge variant="secondary" className="text-[10px] bg-white/5 border-white/10">CACHED</Badge>}
                             {msg.streaming && (
@@ -322,7 +322,7 @@ export default function Chat() {
                         </div>
                         <div className="flex items-center gap-3 text-primary">
                           <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                          {aiProvider === "coze" ? "Coze Agent analysing" : "Replit AI analysing"}
+                          {aiProvider === "coze" ? "Coze Agent analysing" : "Claude AI analysing"}
                         </div>
                         <div className="flex items-center gap-3 opacity-50">
                           <CircleDashed className="w-4 h-4" /> Formatting response

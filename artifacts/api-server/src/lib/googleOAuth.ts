@@ -110,14 +110,14 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string): 
 
   persistTokens();
 
-  // Prominently log so the user can copy it to Replit Secrets
+  // Prominently log so the user can copy it to .env file
   logger.info(
     { refreshToken: tokens.refreshToken },
-    "=== GOOGLE OAUTH SUCCESS — save GOOGLE_REFRESH_TOKEN to Replit Secrets ==="
+    "=== GOOGLE OAUTH SUCCESS — save GOOGLE_REFRESH_TOKEN to .env file ==="
   );
   console.log(
     "\n\n✅  GOOGLE DRIVE CONNECTED\n" +
-    "Save this as GOOGLE_REFRESH_TOKEN in Replit Secrets so it survives restarts:\n\n" +
+    "Save this as GOOGLE_REFRESH_TOKEN in .env file so it survives restarts:\n\n" +
     `GOOGLE_REFRESH_TOKEN=${tokens.refreshToken}\n\n`
   );
 }

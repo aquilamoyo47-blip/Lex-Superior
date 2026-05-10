@@ -224,7 +224,7 @@ export default function Training() {
               {driveStatus && !driveStatus.configured && (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-400/10 border border-amber-400/20 text-sm text-amber-300">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>Set <code className="bg-white/10 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-white/10 px-1 rounded">GOOGLE_CLIENT_SECRET</code> in Replit Secrets to enable OAuth.</span>
+                  <span>Set <code className="bg-white/10 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="bg-white/10 px-1 rounded">GOOGLE_CLIENT_SECRET</code> in your .env file to enable OAuth.</span>
                 </div>
               )}
             </CardContent>
@@ -235,7 +235,7 @@ export default function Training() {
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Key className="w-4 h-4 text-primary" />
-                Required Replit Secrets
+                Required Environment Variables
               </CardTitle>
             </CardHeader>
             <CardContent>
