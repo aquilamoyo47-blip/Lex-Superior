@@ -1,11 +1,57 @@
+import React, { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Scale, FileText, Search, Shield, BookOpen, Clock, ArrowRight, Gavel, FileCheck, BrainCircuit } from "lucide-react";
+import { Scale, FileText, Search, Shield, BookOpen, Clock, ArrowRight, Gavel, FileCheck, BrainCircuit, Sparkles, ClipboardList, Landmark } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+interface CouncilMember {
+  id: string;
+  name: string;
+  title: string;
+  specialty: string;
+  description: string;
+  expertise: string[];
+  icon_key: string;
+  accent_key: string;
+}
+
+const COUNCIL_ICON_MAP: Record<string, React.ElementType> = {
+  gavel: Gavel,
+  search: Search,
+  landmark: Landmark,
+  brain: BrainCircuit,
+  clipboard: ClipboardList,
+  sparkles: Sparkles,
+  shield: Shield,
+  book: BookOpen,
+  scale: Scale,
+};
+
+const COUNCIL_ACCENT_MAP: Record<string, string> = {
+  gold: "border-amber-400/50 bg-amber-400/5",
+  blue: "border-blue-400/50 bg-blue-400/5",
+  emerald: "border-emerald-400/50 bg-emerald-400/5",
+  violet: "border-violet-400/50 bg-violet-400/5",
+  rose: "border-rose-400/50 bg-rose-400/5",
+  cyan: "border-cyan-400/50 bg-cyan-400/5",
+};
 
 export default function Landing() {
+  const [councilMembers, setCouncilMembers] = useState<CouncilMember[]>([]);
+
+  useEffect(() => {
+    fetch("/api/council/members")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setCouncilMembers(data);
+      })
+      .catch(() => {});
+  }, []);
+
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
@@ -51,7 +97,7 @@ export default function Landing() {
             </motion.p>
             
             <motion.div variants={itemVariants} className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/chat">
+              <Link href="/council">
                 <Button size="lg" className="h-14 px-8 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl w-full sm:w-auto shadow-lg shadow-primary/25 hover:-translate-y-1 transition-all">
                   Start Consultation
                   <ArrowRight className="w-5 h-5 ml-2" />
@@ -102,6 +148,78 @@ export default function Landing() {
                 </Card>
               </motion.div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Meet the Council */}
+      <section className="py-24 bg-card/20 border-t border-white/5 relative z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-semibold mb-6">
+              <Sparkles className="w-4 h-4" />
+              AI Legal Council
+            </div>
+            <h2 className="text-3xl md:text-4xl font-display font-bold mb-4">
+              Meet Your <span className="text-gradient-gold">Expert Council</span>
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto text-lg">
+              Five specialist AI advocates, each deeply trained in a distinct domain of Zimbabwe civil law.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+            {councilMembers.length === 0 ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <Card key={i} className="border-white/5 bg-card/20 animate-pulse">
+                  <CardContent className="p-6">
+                    <div className="w-12 h-12 rounded-xl bg-white/5 mb-4" />
+                    <div className="h-5 bg-white/5 rounded mb-2 w-3/4" />
+                    <div className="h-3 bg-white/5 rounded mb-4 w-1/2" />
+                    <div className="space-y-2">
+                      <div className="h-3 bg-white/5 rounded w-full" />
+                      <div className="h-3 bg-white/5 rounded w-5/6" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              councilMembers.map((member, i) => {
+                const Icon = COUNCIL_ICON_MAP[member.icon_key] || Scale;
+                const accentClass = COUNCIL_ACCENT_MAP[member.accent_key] || COUNCIL_ACCENT_MAP.gold;
+                return (
+                  <motion.div
+                    key={member.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.08, duration: 0.5 }}
+                  >
+                    <Card className={cn("h-full border hover:-translate-y-1 transition-all duration-300", accentClass)}>
+                      <CardContent className="p-6 flex flex-col">
+                        <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-4 bg-white/5 border border-white/10">
+                          <Icon className="w-6 h-6 text-primary" />
+                        </div>
+                        <h3 className="font-display font-bold text-lg mb-1">{member.name}</h3>
+                        <Badge className="w-fit text-xs mb-3 bg-white/5 text-muted-foreground border-0">
+                          {member.title}
+                        </Badge>
+                        <p className="text-sm text-muted-foreground leading-relaxed flex-1">{member.description}</p>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="text-center">
+            <Link href="/council">
+              <Button size="lg" className="h-14 px-10 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-lg shadow-primary/25 hover:-translate-y-1 transition-all">
+                Consult the Council
+                <ArrowRight className="w-5 h-5 ml-2" />
+              </Button>
+            </Link>
           </div>
         </div>
       </section>

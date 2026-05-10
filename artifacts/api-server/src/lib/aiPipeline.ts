@@ -1,4 +1,3 @@
-import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "./logger";
 import { LRUCache } from "../vendor/lru-cache.js";
 import { countTokens, truncateToTokenLimit } from "../vendor/token-counter.js";
@@ -152,38 +151,6 @@ function makeCircuitBreaker(name: string): CircuitBreaker {
   });
 }
 
-const replitProvider: ProviderConfig = {
-  name: "Replit AI (gpt-5.2)",
-  priority: 1,
-  dailyLimit: 999999,
-  callFn: async (messages) => {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.2",
-      max_completion_tokens: 8192,
-      messages,
-      stream: false,
-    });
-    return response.choices[0]?.message?.content || "";
-  },
-  streamFn: async (messages, onChunk) => {
-    const stream = await openai.chat.completions.create({
-      model: "gpt-5.2",
-      max_completion_tokens: 8192,
-      messages,
-      stream: true,
-    });
-    let fullContent = "";
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content;
-      if (delta) {
-        fullContent += delta;
-        onChunk(delta);
-      }
-    }
-    return fullContent;
-  },
-};
-
 function buildCozeProvider(): ProviderConfig | null {
   const token = process.env.COZE_API_TOKEN;
   const botId = process.env.COZE_BOT_ID;
@@ -248,10 +215,140 @@ function buildCozeProvider(): ProviderConfig | null {
   };
 }
 
+function buildClaudeProvider(): ProviderConfig | null {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+  const CLAUDE_MODEL = "claude-opus-4-7";
+  const CLAUDE_HEADERS = {
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "prompt-caching-2024-07-31,interleaved-thinking-2025-05-14",
+    "content-type": "application/json",
+  };
+
+  async function callClaudeRaw(messages: ProviderMessages): Promise<string> {
+    const systemMsg = messages.find((m) => m.role === "system")?.content || "";
+    const convoMsgs = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    const response = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: CLAUDE_HEADERS,
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 8000,
+        system: [{ type: "text", text: systemMsg, cache_control: { type: "ephemeral" } }],
+        messages: convoMsgs,
+        thinking: { type: "enabled", budget_tokens: 3000 },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Anthropic API ${response.status}: ${text}`);
+    }
+
+    const data = (await response.json()) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+
+    return data.content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text || "")
+      .join("");
+  }
+
+  async function streamClaudeRaw(
+    messages: ProviderMessages,
+    onChunk: (chunk: string) => void
+  ): Promise<string> {
+    const systemMsg = messages.find((m) => m.role === "system")?.content || "";
+    const convoMsgs = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    const response = await fetch(CLAUDE_API_URL, {
+      method: "POST",
+      headers: CLAUDE_HEADERS,
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 8000,
+        stream: true,
+        system: [{ type: "text", text: systemMsg, cache_control: { type: "ephemeral" } }],
+        messages: convoMsgs,
+        thinking: { type: "enabled", budget_tokens: 3000 },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Anthropic API ${response.status}: ${text}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+    let buffer = "";
+    const blockTypes: Record<number, string> = {};
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const dataStr = line.slice(6).trim();
+        if (!dataStr || dataStr === "[DONE]") continue;
+        try {
+          const ev = JSON.parse(dataStr) as {
+            type?: string;
+            index?: number;
+            content_block?: { type: string };
+            delta?: { type: string; text?: string };
+          };
+          if (ev.type === "content_block_start" && ev.index !== undefined && ev.content_block) {
+            blockTypes[ev.index] = ev.content_block.type;
+          } else if (ev.type === "content_block_delta" && ev.index !== undefined && ev.delta) {
+            if (blockTypes[ev.index] === "text" && ev.delta.type === "text_delta" && ev.delta.text) {
+              fullText += ev.delta.text;
+              onChunk(ev.delta.text);
+            }
+          }
+        } catch {
+          // skip malformed SSE events
+        }
+      }
+    }
+
+    return fullText;
+  }
+
+  return {
+    name: "Claude (claude-opus-4-7)",
+    priority: 0,
+    dailyLimit: 999999,
+    callFn: callClaudeRaw,
+    streamFn: streamClaudeRaw,
+  };
+}
+
 function buildProviderStates(): Map<string, ProviderState> {
-  const configs: ProviderConfig[] = [replitProvider];
+  const configs: ProviderConfig[] = [];
+  const claude = buildClaudeProvider();
+  if (claude) configs.push(claude);
   const coze = buildCozeProvider();
   if (coze) configs.push(coze);
+  if (configs.length === 0) {
+    logger.warn("No AI providers configured — set ANTHROPIC_API_KEY in your .env file");
+  }
 
   return new Map(
     configs.map((cfg) => [
@@ -360,17 +457,28 @@ async function dispatchParallelStream(
 }
 
 async function qualityReview(content: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return content;
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.2",
-      max_completion_tokens: 8192,
-      messages: [
-        { role: "system", content: QUALITY_REVIEW_PROMPT },
-        { role: "user", content: `Review this legal response:\n\n${content}` },
-      ],
-      stream: false,
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4-7",
+        max_tokens: 4096,
+        messages: [
+          { role: "user", content: `${QUALITY_REVIEW_PROMPT}\n\nReview this legal response:\n\n${content}` },
+        ],
+      }),
+      signal: AbortSignal.timeout(30000),
     });
-    return response.choices[0]?.message?.content || content;
+    if (!response.ok) return content;
+    const data = (await response.json()) as { content: Array<{ type: string; text?: string }> };
+    return data.content.filter((b) => b.type === "text").map((b) => b.text || "").join("") || content;
   } catch (err) {
     logger.warn({ err }, "Quality review failed, using original content");
     return content;
@@ -650,6 +758,17 @@ export function getProviderStatus(): Array<{
       circuitState: stats.state,
     };
   });
+
+  if (!process.env.ANTHROPIC_API_KEY && !statuses.find((s) => s.name.startsWith("Claude"))) {
+    statuses.push({
+      name: "Claude (claude-opus-4-7)",
+      available: false,
+      dailyUsage: 0,
+      dailyLimit: 999999,
+      rateLimited: false,
+      circuitState: "N/A",
+    });
+  }
 
   const cozeConfigured = !!(process.env.COZE_API_TOKEN && process.env.COZE_BOT_ID);
   if (!cozeConfigured && !statuses.find((s) => s.name === "Coze")) {

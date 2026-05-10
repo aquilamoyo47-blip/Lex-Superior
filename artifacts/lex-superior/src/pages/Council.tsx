@@ -9,7 +9,7 @@ import {
   Scale, FileText, BookOpen, ClipboardList, Landmark,
   Send, Copy, Download, Bookmark, AlertTriangle, User,
   Brain, PlusCircle, ChevronLeft, Sparkles, Loader2,
-  Search, ExternalLink, Database, GitFork, X
+  Search, ExternalLink, Database, GitFork, X, Clock
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
@@ -56,6 +56,22 @@ interface CouncilMember {
   description: string;
   icon: string;
   color: string;
+}
+
+interface BookmarkEntry {
+  id: string;
+  content: string;
+  memberName: string;
+  memberTitle: string;
+  savedAt: string;
+  consultationId: string | null;
+}
+
+interface HistoryEntry {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
 }
 
 interface Message {
@@ -138,6 +154,10 @@ export default function Council() {
   const [deepDiveInput, setDeepDiveInput] = useState("");
   const [deepDiveMeta, setDeepDiveMeta] = useState<DeepDiveMeta | null>(null);
 
+  const [sidebarTab, setSidebarTab] = useState<"context" | "history">("context");
+  const [consultationHistory, setConsultationHistory] = useState<HistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   useEffect(() => {
     fetch("/api/council/members")
       .then(r => r.json())
@@ -151,6 +171,17 @@ export default function Council() {
     }
   }, [messages, isStreaming]);
 
+  useEffect(() => {
+    if (!selectedMember) return;
+    setHistoryLoading(true);
+    const userId = localStorage.getItem("userId") || "anonymous";
+    fetch(`/api/consultations?userId=${encodeURIComponent(userId)}&practiceArea=${encodeURIComponent(selectedMember.specialty)}`)
+      .then(r => r.json())
+      .then(data => setConsultationHistory((data.consultations || []).slice(0, 20)))
+      .catch(() => setConsultationHistory([]))
+      .finally(() => setHistoryLoading(false));
+  }, [selectedMember]);
+
   const selectMember = useCallback((member: CouncilMember) => {
     setSelectedMember(member);
     setMessages([]);
@@ -161,6 +192,8 @@ export default function Council() {
     setDeepDiveMode(false);
     setDeepDiveInput("");
     setDeepDiveMeta(null);
+    setSidebarTab("context");
+    setConsultationHistory([]);
   }, []);
 
   // ── Case Deep Dive handler ────────────────────────────────────────────────
@@ -260,6 +293,51 @@ export default function Council() {
       setIsStreaming(false);
     }
   }, [deepDiveInput, isStreaming]);
+
+  const handleDownload = useCallback((content: string, memberName: string) => {
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${memberName.replace(/\s+/g, "-")}-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Downloaded");
+  }, []);
+
+  const handleSave = useCallback((content: string) => {
+    const bookmarks: BookmarkEntry[] = JSON.parse(localStorage.getItem("lex-bookmarks") || "[]");
+    bookmarks.unshift({
+      id: crypto.randomUUID(),
+      content,
+      memberName: selectedMember?.name ?? "Council",
+      memberTitle: selectedMember?.title ?? "",
+      savedAt: new Date().toISOString(),
+      consultationId,
+    });
+    localStorage.setItem("lex-bookmarks", JSON.stringify(bookmarks.slice(0, 50)));
+    toast.success("Response saved to bookmarks");
+  }, [selectedMember, consultationId]);
+
+  const loadConsultation = useCallback(async (histId: string) => {
+    try {
+      const res = await fetch(`/api/consultations/${histId}`);
+      const data = await res.json();
+      const loaded: Message[] = (data.messages || []).map((m: any) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        flags: m.flags || [],
+        memberId: selectedMember?.id,
+      }));
+      setMessages(loaded);
+      setConsultationId(histId);
+      setSidebarTab("context");
+      toast.success("Consultation loaded");
+    } catch {
+      toast.error("Failed to load consultation");
+    }
+  }, [selectedMember]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || !selectedMember || isStreaming) return;
@@ -470,8 +548,67 @@ export default function Council() {
                 )}
               </div>
 
+              {/* Sidebar Tabs */}
+              <div className="flex border-b border-white/5">
+                <button
+                  onClick={() => setSidebarTab("context")}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-semibold transition-colors",
+                    sidebarTab === "context"
+                      ? "text-primary border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Context
+                </button>
+                <button
+                  onClick={() => setSidebarTab("history")}
+                  className={cn(
+                    "flex-1 py-2 text-xs font-semibold transition-colors",
+                    sidebarTab === "history"
+                      ? "text-primary border-b-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  History
+                </button>
+              </div>
+
               <ScrollArea className="flex-1 p-4">
-                {/* Deep Dive Meta Panel */}
+                {sidebarTab === "history" ? (
+                  historyLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : consultationHistory.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Clock className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+                      <p className="text-xs text-muted-foreground">No past consultations yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {consultationHistory.map(entry => (
+                        <button
+                          key={entry.id}
+                          onClick={() => loadConsultation(entry.id)}
+                          className={cn(
+                            "w-full text-left p-2.5 rounded-lg text-xs border transition-colors",
+                            entry.id === consultationId
+                              ? "bg-primary/10 border-primary/30 text-foreground"
+                              : "bg-white/5 border-white/5 text-foreground/70 hover:bg-white/10 hover:border-white/10"
+                          )}
+                        >
+                          <p className="font-medium leading-snug line-clamp-2 mb-1">{entry.title}</p>
+                          <p className="text-muted-foreground text-[10px]">
+                            {entry.messageCount} message{entry.messageCount !== 1 ? "s" : ""} ·{" "}
+                            {new Date(entry.updatedAt).toLocaleDateString("en-ZW", { day: "numeric", month: "short" })}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                <>{/* Deep Dive Meta Panel */}
                 {deepDiveMeta && (
                   <div className="mb-6">
                     <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -586,6 +723,8 @@ export default function Council() {
                       ))}
                     </div>
                   </div>
+                )}
+                </>
                 )}
               </ScrollArea>
             </aside>
@@ -711,7 +850,10 @@ export default function Council() {
                                 <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(msg.content); toast.success("Copied"); }} className="h-8 text-muted-foreground hover:text-foreground text-xs">
                                   <Copy className="w-3.5 h-3.5 mr-1.5" /> Copy
                                 </Button>
-                                <Button variant="ghost" size="sm" className="h-8 text-muted-foreground hover:text-foreground text-xs ml-auto">
+                                <Button variant="ghost" size="sm" onClick={() => handleDownload(msg.content, selectedMember!.name)} className="h-8 text-muted-foreground hover:text-foreground text-xs">
+                                  <Download className="w-3.5 h-3.5 mr-1.5" /> Download
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => handleSave(msg.content)} className="h-8 text-muted-foreground hover:text-foreground text-xs ml-auto">
                                   <Bookmark className="w-3.5 h-3.5 mr-1.5" /> Save
                                 </Button>
                               </div>

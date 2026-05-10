@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel, Users } from "lucide-react";
+import { Scale, BookOpen, FileText, FolderClosed, Info, MessageSquare, Menu, X, Gavel, Users, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/vault", label: "Vault", icon: FolderClosed },
   { href: "/guides", label: "Guides", icon: Gavel },
   { href: "/about", label: "About", icon: Info },
+  { href: "/training", label: "Training", icon: Database },
 ];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {

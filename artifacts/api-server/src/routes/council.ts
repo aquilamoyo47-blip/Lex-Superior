@@ -1,5 +1,4 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
 import { db } from "@workspace/db";
 import { consultationsTable, messagesTable, casesTable, statutesTable } from "@workspace/db";
 import { eq, desc, ilike, or, sql } from "drizzle-orm";
@@ -231,7 +230,7 @@ Your expertise covers:
 - Constitutional damages and remedies
 - Proportionality analysis
 - Section 86 — limitations of rights
-- Key ConCourt judgments: Mudzuru v Minister of Justice;示威 Chiminya v EC Zimbabwe; and all landmark civil constitutional cases
+- Key ConCourt judgments: Mudzuru v Minister of Justice; Chiminya v EC Zimbabwe; and all landmark civil constitutional cases
 
 ANALYSIS FORMAT for constitutional matters:
 1. **Constitutional Provision**: Exact section and subsection
@@ -251,6 +250,74 @@ RULES:
 This output constitutes legal research assistance only and not formal legal advice. Consult a registered legal practitioner.`
   }
 ];
+
+async function* streamClaude(
+  systemPrompt: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>
+): AsyncGenerator<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-opus-4-7",
+      max_tokens: 8000,
+      stream: true,
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages,
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Anthropic API ${response.status}: ${err}`);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const blockTypes: Record<number, string> = {};
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const raw = line.slice(6).trim();
+      if (!raw || raw === "[DONE]") continue;
+      try {
+        const ev = JSON.parse(raw) as {
+          type?: string;
+          index?: number;
+          content_block?: { type: string };
+          delta?: { type: string; text?: string };
+        };
+        if (ev.type === "content_block_start" && ev.index !== undefined && ev.content_block) {
+          blockTypes[ev.index] = ev.content_block.type;
+        } else if (
+          ev.type === "content_block_delta" &&
+          ev.index !== undefined &&
+          ev.delta?.type === "text_delta" &&
+          blockTypes[ev.index] === "text" &&
+          ev.delta.text
+        ) {
+          yield ev.delta.text;
+        }
+      } catch { /* skip malformed */ }
+    }
+  }
+}
 
 const queryCache = new Map<string, { content: string; expiry: number }>();
 
@@ -407,23 +474,10 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
       }
     })}\n\n`);
 
-    const stream = await openai.chat.completions.create({
-      model: member.model,
-      max_completion_tokens: 8192,
-      messages: [
-        { role: "system", content: member.systemPrompt },
-        { role: "user", content: deepDivePrompt },
-      ],
-      stream: true,
-    });
-
     let fullResponse = "";
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
+    for await (const content of streamClaude(member.systemPrompt, [{ role: "user", content: deepDivePrompt }])) {
+      fullResponse += content;
+      res.write(`data: ${JSON.stringify({ content })}\n\n`);
     }
 
     const flags = extractVerifyFlags(fullResponse);
@@ -461,6 +515,15 @@ Please perform the complete 8-step Research Pipeline analysis for this case. Str
 });
 
 router.get("/council/members", (_req, res) => {
+  const ICON_KEY_MAP: Record<string, string> = {
+    Scale: "scale", FileText: "sparkles", BookOpen: "book",
+    ClipboardList: "clipboard", Landmark: "landmark",
+    Gavel: "gavel", Search: "search", Shield: "shield", BrainCircuit: "brain",
+  };
+  const ACCENT_KEY_MAP: Record<string, string> = {
+    gold: "gold", blue: "blue", purple: "violet",
+    green: "emerald", amber: "cyan", violet: "violet", emerald: "emerald",
+  };
   res.json(COUNCIL_MEMBERS.map(m => ({
     id: m.id,
     name: m.name,
@@ -469,6 +532,8 @@ router.get("/council/members", (_req, res) => {
     description: m.description,
     icon: m.icon,
     color: m.color,
+    icon_key: ICON_KEY_MAP[m.icon] || "scale",
+    accent_key: ACCENT_KEY_MAP[m.color] || "gold",
   })));
 });
 
@@ -547,20 +612,12 @@ router.post("/council/chat", async (req: Request, res: Response) => {
     ];
 
     let fullResponse = "";
-
-    const stream = await openai.chat.completions.create({
-      model: member.model,
-      max_completion_tokens: 8192,
-      messages: chatMessages,
-      stream: true,
-    });
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
+    const claudeMsgs = chatMessages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+    for await (const content of streamClaude(member.systemPrompt, claudeMsgs)) {
+      fullResponse += content;
+      res.write(`data: ${JSON.stringify({ content })}\n\n`);
     }
 
     const flags = extractVerifyFlags(fullResponse);
