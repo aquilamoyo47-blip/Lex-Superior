@@ -11,6 +11,7 @@ import Library from "@/pages/Library";
 import Vault from "@/pages/Vault";
 import Guides from "@/pages/Guides";
 import About from "@/pages/About";
+import Training from "@/pages/Training";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/vault" component={Vault} />
       <Route path="/guides" component={Guides} />
       <Route path="/about" component={About} />
+      <Route path="/training" component={Training} />
       <Route component={NotFound} />
     </Switch>
   );
